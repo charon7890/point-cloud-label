@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -64,11 +65,21 @@ def format_date_label(time_key: str) -> str:
     return time_key
 
 
+def _ignored_cloud_path(path: Path, root: Path) -> bool:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(str(part).startswith("backup_") for part in parts)
+
+
 def collect_clouds(root: Path) -> list[dict]:
     files = [
         path
         for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in POINT_EXTS
+        if path.is_file()
+        and path.suffix.lower() in POINT_EXTS
+        and not _ignored_cloud_path(path, root)
     ]
     items = []
     for path in files:
@@ -619,6 +630,48 @@ def _resolve_cloud_src(item: dict, out_root: Path | None) -> Path | None:
     return None
 
 
+def backup_original_clouds(payload: dict, out_root: Path) -> tuple[str | None, list[str]]:
+    """覆盖写入前，把将要被改动的 txt / json 拷到 backup_时间戳。"""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_root = out_root / f"backup_{stamp}"
+    errors: list[str] = []
+    copied = 0
+    for item in payload.get("clouds") or []:
+        src = _resolve_cloud_src(item, out_root)
+        if src is None:
+            continue
+        try:
+            dest = out_root / src.relative_to(out_root)
+        except ValueError:
+            relative = str(item.get("relativePath") or src.name).replace("\\", "/").lstrip("/")
+            dest = out_root / Path(relative).name
+        overwrite_src = dest.exists() or dest.resolve() == src.resolve()
+        if not overwrite_src:
+            continue
+        source = dest if dest.is_file() else src
+        try:
+            rel = source.relative_to(out_root)
+        except ValueError:
+            rel = Path(source.name)
+        bak = backup_root / rel
+        try:
+            bak.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, bak)
+            copied += 1
+        except OSError as exc:
+            errors.append(f"备份失败 {source.name}: {exc}")
+    json_path = out_root / "leaf_labels.json"
+    if json_path.is_file():
+        try:
+            backup_root.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(json_path, backup_root / "leaf_labels.json")
+        except OSError as exc:
+            errors.append(f"备份 json 失败: {exc}")
+    if copied == 0 and not (backup_root / "leaf_labels.json").is_file():
+        return None, errors
+    return str(backup_root.resolve()), errors
+
+
 def export_remapped_clouds(payload: dict, out_root: Path) -> tuple[list[str], list[str]]:
     maps = instance_to_leaf_maps(payload)
     exported: list[str] = []
@@ -673,18 +726,23 @@ async def save_labels(request: Request) -> dict:
         out_root.mkdir(parents=True, exist_ok=True)
     else:
         raise HTTPException(status_code=400, detail="请选择保存位置")
+    from starlette.concurrency import run_in_threadpool
+
+    backup_dir = None
+    backup_errors: list[str] = []
+    if mode != "saveas":
+        backup_dir, backup_errors = await run_in_threadpool(backup_original_clouds, payload, out_root)
     export_json = out_root / "leaf_labels.json"
     export_json.write_text(text, encoding="utf-8")
     saved.append(str(export_json))
-
-    from starlette.concurrency import run_in_threadpool
 
     exported, errors = await run_in_threadpool(export_remapped_clouds, payload, out_root)
     return {
         "saved": saved,
         "exported": exported,
         "exportDir": str(out_root),
-        "errors": errors,
+        "backupDir": backup_dir,
+        "errors": [*backup_errors, *errors],
     }
 
 
