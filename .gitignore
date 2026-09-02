@@ -1,0 +1,7 @@
+cache/
+exports/
+__pycache__/
+*.pyc
+.venv/
+venv/
+PC_label/

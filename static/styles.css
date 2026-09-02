@@ -1,0 +1,511 @@
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c232c;
+  --line: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #3d9cf0;
+  --accent-2: #1f6feb;
+  --danger: #f85149;
+  --ok: #3fb950;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.drop-screen {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.drop-card {
+  width: min(560px, 100%);
+  padding: 40px 36px 32px;
+  border: 1px dashed var(--line);
+  background: var(--panel);
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.drop-card.dragover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.drop-mark {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 18px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(var(--muted), var(--muted)) center / 18px 1px no-repeat,
+    linear-gradient(var(--muted), var(--muted)) center / 1px 18px no-repeat;
+}
+
+.drop-card h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.drop-card p {
+  margin: 0 auto 22px;
+  max-width: 42ch;
+  color: var(--muted);
+}
+
+.drop-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.path-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.path-form input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  outline: none;
+}
+
+.path-form input:focus {
+  border-color: var(--accent);
+}
+
+.status {
+  margin-top: 16px;
+  color: var(--danger);
+}
+
+.btn {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: #8b949e;
+}
+
+.btn.primary {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.btn.primary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn.ghost {
+  background: transparent;
+  height: 30px;
+  padding: 0 10px;
+}
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 260px 1fr 280px;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  min-width: 0;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sidebar-head h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.cloud-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+  min-height: 120px;
+}
+
+.cloud-list li {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 10px 10px 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cloud-list li:hover {
+  background: var(--panel-2);
+}
+
+.cloud-list li.active {
+  border-color: var(--accent);
+  background: #122033;
+}
+
+.cloud-list .name {
+  display: block;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.cloud-list .sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.leaf-panel {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  min-width: 0;
+}
+
+.leaf-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.leaf-head h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.leaf-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+}
+
+.leaf-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.leaf-list li:hover {
+  background: var(--panel-2);
+}
+
+.leaf-list li.active {
+  border-color: var(--accent);
+  background: #122033;
+}
+
+.leaf-list .left {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.leaf-list .swatch {
+  width: 8px;
+  height: 8px;
+  margin: 6px 8px 0 0;
+  flex: 0 0 auto;
+  background: var(--accent);
+}
+
+.leaf-list .inst-id {
+  display: block;
+  font-weight: 600;
+}
+
+.leaf-list .sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.leaf-list .actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.leaf-list .actions .btn {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.leaf-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.leaf-foot .btn {
+  min-width: 88px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(11, 13, 17, 0.72);
+  z-index: 20;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-card {
+  width: min(460px, calc(100% - 32px));
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.modal-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.modal-card p {
+  margin: 0 0 10px;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.pick-badge {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.toolbar-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toolbar-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.field input[type="range"] {
+  width: 110px;
+}
+
+.field select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #0b0d11;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.viewport canvas {
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.hint {
+  position: absolute;
+  left: 16px;
+  bottom: 12px;
+  margin: 0;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  background: rgba(11, 13, 17, 0.72);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.overlay:not([hidden]) {
+  pointer-events: auto;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.progress {
+  width: 220px;
+  height: 4px;
+  background: var(--line);
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1100px) {
+  .app {
+    grid-template-columns: 220px 1fr 240px;
+  }
+}
+
+@media (max-width: 860px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 180px 1fr 220px;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .leaf-panel {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}

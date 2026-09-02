@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>点云浏览器</title>
+  <link rel="stylesheet" href="/static/styles.css?v=9" />
+</head>
+<body>
+  <div id="drop-screen" class="drop-screen">
+    <div class="drop-card" id="drop-zone">
+      <div class="drop-mark" aria-hidden="true"></div>
+      <h1>导入点云文件夹</h1>
+      <p>将文件夹拖到此处，或点击选择。将自动读取其中全部点云，并按时间排序。</p>
+      <div class="drop-actions">
+        <button type="button" id="btn-browse" class="btn primary">选择文件夹</button>
+        <button type="button" id="btn-local" class="btn">打开本机路径</button>
+      </div>
+      <form id="path-form" class="path-form" hidden>
+        <input
+          id="path-input"
+          type="text"
+          spellcheck="false"
+          placeholder="例如 E:\pepper_results\K02"
+          value="E:\pepper_results\K02"
+        />
+        <button type="submit" class="btn primary">加载</button>
+      </form>
+      <p id="drop-status" class="status" hidden></p>
+    </div>
+    <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
+  </div>
+
+  <div id="app" class="app" hidden>
+    <aside class="sidebar">
+      <header class="sidebar-head">
+        <div>
+          <h2 id="folder-title">点云列表</h2>
+          <p id="folder-meta" class="muted"></p>
+        </div>
+        <button type="button" id="btn-reimport" class="btn ghost">重新导入</button>
+      </header>
+      <ul id="cloud-list" class="cloud-list"></ul>
+    </aside>
+    <section class="stage">
+      <header class="toolbar">
+        <div class="toolbar-title">
+          <strong id="current-name">未选择</strong>
+          <span id="current-meta" class="muted"></span>
+        </div>
+        <div class="toolbar-controls">
+          <label class="field">
+            点大小
+            <input id="point-size" type="range" min="0.5" max="8" step="0.1" value="1.8" />
+          </label>
+          <label class="field">
+            着色
+            <select id="color-mode">
+              <option value="instance" selected>按实例</option>
+              <option value="rgb">原始颜色</option>
+              <option value="height">按高度</option>
+              <option value="semantic">语义类别</option>
+            </select>
+          </label>
+          <button type="button" id="btn-reset" class="btn">复位视角</button>
+        </div>
+      </header>
+      <div id="viewport" class="viewport" tabindex="-1">
+        <div id="load-overlay" class="overlay" hidden>
+          <div class="spinner"></div>
+          <p id="load-text">正在加载点云…</p>
+          <div class="progress"><span id="load-bar"></span></div>
+        </div>
+        <div id="pick-badge" class="pick-badge" hidden></div>
+        <p id="hint" class="hint">按住左键旋转 · 滚轮缩放 · 单击实例标注 · 右键平移</p>
+      </div>
+    </section>
+    <aside class="leaf-panel">
+      <header class="leaf-head">
+        <div>
+          <h2>叶片对应</h2>
+          <p id="leaf-meta" class="muted">单击点云中的实例，或按 M 新增叶片</p>
+        </div>
+        <button type="button" id="btn-add-leaf" class="btn primary">新增叶片 (M)</button>
+      </header>
+      <ul id="leaf-list" class="leaf-list"></ul>
+      <footer class="leaf-foot">
+        <button type="button" id="btn-finish" class="btn primary">完成</button>
+      </footer>
+    </aside>
+  </div>
+
+  <div id="finish-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>标注完成</h2>
+      <p id="finish-summary" class="muted"></p>
+      <p id="finish-save" class="muted"></p>
+      <p class="muted">保存：把带 leaf_id 的 txt 和 json 直接写回原文件夹（会覆盖同名 txt）。另存为：弹出窗口选择其他位置，可新建文件夹。</p>
+      <div id="finish-actions-save" class="modal-actions">
+        <button type="button" id="btn-save" class="btn primary">保存</button>
+        <button type="button" id="btn-save-as" class="btn">另存为</button>
+        <button type="button" id="btn-finish-cancel" class="btn ghost">取消</button>
+      </div>
+      <div id="finish-actions-done" class="modal-actions" hidden>
+        <button type="button" id="btn-exit" class="btn">退出</button>
+        <button type="button" id="btn-import-new" class="btn primary">导入新文件夹</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="/static/app.js?v=19"></script>
+</body>
+</html>
