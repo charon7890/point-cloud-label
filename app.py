@@ -466,8 +466,21 @@ async def locate_folder(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="没有可定位的点云路径")
     for candidate in _expand_locate_hints(hints, relatives):
         files = _match_folder(candidate, relatives, sizes)
-        if files:
-            return {"root": str(candidate.resolve()), "files": files}
+        if not files:
+            continue
+        found_paths = [Path(item["id"]) for item in files]
+        common = _common_folder(found_paths) or candidate
+        return {
+            "root": str(common.resolve()),
+            "files": [
+                {
+                    "relative": item["relative"],
+                    "id": item["id"],
+                    "relativePath": str(Path(item["id"]).relative_to(common)).replace("\\", "/"),
+                }
+                for item in files
+            ],
+        }
     raise HTTPException(status_code=404, detail="无法定位打开文件所在的文件夹")
 
 
