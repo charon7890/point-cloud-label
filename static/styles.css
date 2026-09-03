@@ -110,12 +110,9 @@ select {
   color: var(--danger);
 }
 
-.btn {
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  cursor: pointer;
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .btn:hover {
@@ -234,12 +231,85 @@ select {
   font-size: 15px;
 }
 
+.leaf-head-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.history-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.history-actions .btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px;
+}
+
 .leaf-list {
   list-style: none;
   margin: 0;
   padding: 8px;
   overflow: auto;
   flex: 1;
+}
+
+.gap-panel {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px 8px;
+  max-height: 34%;
+  overflow: auto;
+  flex: 0 1 auto;
+}
+
+.gap-panel h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.gap-panel #gap-summary {
+  margin: 0 0 8px;
+}
+
+.gap-panel #gap-summary.ok {
+  color: var(--ok);
+}
+
+.gap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gap-list li {
+  margin-bottom: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.gap-list li:hover {
+  border-color: var(--accent);
+}
+
+.gap-list .gap-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gap-list .gap-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .leaf-list li {

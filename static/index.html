@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>点云浏览器</title>
-  <link rel="stylesheet" href="/static/styles.css?v=9" />
+  <link rel="stylesheet" href="/static/styles.css?v=10" />
 </head>
 <body>
   <div id="drop-screen" class="drop-screen">
@@ -81,9 +81,20 @@
           <h2>叶片对应</h2>
           <p id="leaf-meta" class="muted">单击点云中的实例，或按 M 新增叶片</p>
         </div>
-        <button type="button" id="btn-add-leaf" class="btn primary">新增叶片 (M)</button>
+        <div class="leaf-head-actions">
+          <div class="history-actions">
+            <button type="button" id="btn-undo" class="btn ghost" disabled title="Ctrl+Z">撤销</button>
+            <button type="button" id="btn-redo" class="btn ghost" disabled title="Ctrl+Y">重做</button>
+          </div>
+          <button type="button" id="btn-add-leaf" class="btn primary">新增叶片 (M)</button>
+        </div>
       </header>
       <ul id="leaf-list" class="leaf-list"></ul>
+      <section id="gap-panel" class="gap-panel">
+        <h3>缺标检查</h3>
+        <p id="gap-summary" class="muted">导入点云后显示缺标情况</p>
+        <ul id="gap-list" class="gap-list"></ul>
+      </section>
       <footer class="leaf-foot">
         <button type="button" id="btn-finish" class="btn primary">完成</button>
       </footer>
@@ -95,7 +106,7 @@
       <h2>标注完成</h2>
       <p id="finish-summary" class="muted"></p>
       <p id="finish-save" class="muted"></p>
-      <p class="muted">保存：把带 leaf_id 的 txt 和 json 直接写回原文件夹（会覆盖同名 txt）。另存为：弹出窗口选择其他位置，可新建文件夹。</p>
+      <p class="muted">保存：先把原 txt 和 json 拷到 backup_时间戳 子目录，再写回带 leaf_id 的文件。另存为：弹出窗口选择其他位置，可新建文件夹。</p>
       <div id="finish-actions-save" class="modal-actions">
         <button type="button" id="btn-save" class="btn primary">保存</button>
         <button type="button" id="btn-save-as" class="btn">另存为</button>
@@ -116,6 +127,6 @@
       }
     }
   </script>
-  <script type="module" src="/static/app.js?v=19"></script>
+  <script type="module" src="/static/app.js?v=21"></script>
 </body>
 </html>

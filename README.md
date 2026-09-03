@@ -6,15 +6,22 @@
 
 ## 启动
 
-Windows 下双击 `start.bat`。首次运行会在项目目录创建 conda 环境 `PC_label` 并安装依赖，然后打开 `http://127.0.0.1:8765`。
+推荐直接双击 `start.bat`。首次运行会在项目目录创建 conda 环境 `PC_label` 并安装依赖，然后打开 `http://127.0.0.1:8765`。
 
-也可手动启动：
+这个环境是按**路径**创建的（`E:\点云标注\PC_label`），不是 Anaconda 里普通的命名环境。若要用命令启动：
 
-```bash
-conda create -p ./PC_label python=3.11 numpy -y
-./PC_label/python -m pip install -r requirements.txt
-./PC_label/python app.py
+```powershell
+conda activate E:\点云标注\PC_label
+python app.py
 ```
+
+或直接：
+
+```powershell
+E:\点云标注\PC_label\python.exe app.py
+```
+
+启动成功后，终端会停在 `Uvicorn running on http://127.0.0.1:8765`，**不要关这个窗口**。浏览器访问该地址即可。若提示端口被占用，说明已经有一份程序在跑，先关掉之前的窗口，或直接打开网页。
 
 ## 功能概要
 
@@ -22,6 +29,7 @@ conda create -p ./PC_label python=3.11 numpy -y
 - 三维查看：旋转、缩放、平移；WASD 屏幕平移
 - 按实例着色，单击实例做跨文件叶片对应
 - 已对应实例半透明；M 新增叶片；Delete 取消当前文件对应
+- Ctrl+Z / Ctrl+Y 撤销重做；右侧缺标检查；保存前自动备份原文件
 - 保存写回原文件夹；另存为可选其他目录
 
 ## 不纳入版本库的内容

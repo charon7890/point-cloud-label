@@ -5,9 +5,9 @@ import {
   toCloudItems,
   unpackCloud,
   walkEntry,
-} from "./format.js?v=19";
-import { leafCss, LeafBook } from "./labels.js?v=19";
-import { PointCloudViewer } from "./viewer.js?v=19";
+} from "./format.js?v=21";
+import { leafCss, LeafBook, LabelHistory } from "./labels.js?v=21";
+import { PointCloudViewer } from "./viewer.js?v=21";
 
 const dropScreen = document.getElementById("drop-screen");
 const dropZone = document.getElementById("drop-zone");
@@ -35,6 +35,10 @@ const pickBadge = document.getElementById("pick-badge");
 const leafList = document.getElementById("leaf-list");
 const leafMeta = document.getElementById("leaf-meta");
 const btnAddLeaf = document.getElementById("btn-add-leaf");
+const btnUndo = document.getElementById("btn-undo");
+const btnRedo = document.getElementById("btn-redo");
+const gapSummary = document.getElementById("gap-summary");
+const gapList = document.getElementById("gap-list");
 const btnFinish = document.getElementById("btn-finish");
 const finishModal = document.getElementById("finish-modal");
 const finishSummary = document.getElementById("finish-summary");
@@ -50,6 +54,7 @@ const hint = document.getElementById("hint");
 
 const viewer = new PointCloudViewer(viewport);
 const book = new LeafBook();
+const history = new LabelHistory();
 const cache = new Map();
 const inflight = new Map();
 let clouds = [];
@@ -199,6 +204,8 @@ function applyLocatedFolder(data) {
   for (const [key, value] of nextCache) cache.set(key, value);
   remapBookToClouds();
   persist();
+  history.reset(book);
+  updateUndoButtons();
   renderList();
 }
 
@@ -234,16 +241,122 @@ function assignedCount(cloudId) {
   return book.leaves.filter((leaf) => leaf.assignments[cloudId] != null).length;
 }
 
+function updateUndoButtons() {
+  if (!btnUndo || !btnRedo) return;
+  btnUndo.disabled = !history.canUndo;
+  btnRedo.disabled = !history.canRedo;
+}
+
+function cloudLabel(item) {
+  return `${item.dateLabel} ${item.fileName}`;
+}
+
+function renderGaps() {
+  if (!gapSummary || !gapList) return;
+  gapList.innerHTML = "";
+  if (!clouds.length) {
+    gapSummary.className = "muted";
+    gapSummary.textContent = "导入点云后显示缺标情况";
+    return;
+  }
+  if (!book.leaves.length) {
+    gapSummary.className = "muted";
+    gapSummary.textContent = `共 ${clouds.length} 个点云，尚未创建叶片`;
+    return;
+  }
+  const unlabeled = clouds.filter((item) => assignedCount(item.id) === 0);
+  const leafGaps = book.leaves
+    .map((leaf) => ({
+      leaf,
+      missing: clouds.filter((item) => leaf.assignments[item.id] == null),
+    }))
+    .filter((row) => row.missing.length);
+  if (!unlabeled.length && !leafGaps.length) {
+    gapSummary.className = "muted ok";
+    gapSummary.textContent = `各叶片已在全部 ${clouds.length} 个点云中对应`;
+    return;
+  }
+  gapSummary.className = "muted";
+  const bits = [];
+  if (unlabeled.length) bits.push(`${unlabeled.length} 个文件尚未对应任何叶片`);
+  if (leafGaps.length) bits.push(`${leafGaps.length} 个叶片有缺天`);
+  gapSummary.textContent = bits.join("；");
+
+  for (const item of unlabeled) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="gap-title">未对应：${item.dateLabel}</span><span class="gap-sub">${item.fileName}</span>`;
+    li.addEventListener("click", () => selectCloud(item.id));
+    gapList.appendChild(li);
+  }
+  for (const row of leafGaps) {
+    const li = document.createElement("li");
+    const preview = row.missing
+      .slice(0, 4)
+      .map((item) => item.dateLabel)
+      .join("、");
+    const more = row.missing.length > 4 ? ` 等 ${row.missing.length} 天` : "";
+    li.innerHTML = `<span class="gap-title">${row.leaf.name}缺 ${row.missing.length} 天</span><span class="gap-sub">${preview}${more}</span>`;
+    li.addEventListener("click", () => {
+      book.activeId = row.leaf.id;
+      selectCloud(row.missing[0].id);
+      renderLeaves();
+    });
+    gapList.appendChild(li);
+  }
+}
+
+function commitLabelChange() {
+  history.push(book);
+  persist();
+  applyLabelsToViewer();
+  renderLeaves();
+  renderList();
+  updateUndoButtons();
+  viewer.highlightInstance(
+    activeId != null && book.activeId != null
+      ? book.get(book.activeId)?.assignments[activeId] ?? null
+      : null
+  );
+}
+
+function undoLabels() {
+  if (!history.undo(book)) return;
+  persist();
+  applyLabelsToViewer();
+  renderLeaves();
+  renderList();
+  updateUndoButtons();
+  const inst =
+    activeId != null && book.activeId != null
+      ? book.get(book.activeId)?.assignments[activeId] ?? null
+      : null;
+  viewer.highlightInstance(inst);
+}
+
+function redoLabels() {
+  if (!history.redo(book)) return;
+  persist();
+  applyLabelsToViewer();
+  renderLeaves();
+  renderList();
+  updateUndoButtons();
+  const inst =
+    activeId != null && book.activeId != null
+      ? book.get(book.activeId)?.assignments[activeId] ?? null
+      : null;
+  viewer.highlightInstance(inst);
+}
+
 function updateHint() {
   const active = book.get(book.activeId);
   if (active) {
-    hint.textContent = `已选 ${active.name}：WASD（W上 A左 S下 D右）· 双击右键拖动 · ↑↓叶片 ←→点云 · M 新增`;
+    hint.textContent = `已选 ${active.name}：WASD（W上 A左 S下 D右）· Ctrl+Z 撤销 · ↑↓叶片 ←→点云 · M 新增`;
     pickBadge.hidden = false;
     pickBadge.textContent = `将标注为 ${active.name}（Delete 取消当前文件对应）`;
     return;
   }
   pickBadge.hidden = true;
-  hint.textContent = "WASD：W上 A左 S下 D右 · 双击右键拖动视角 · ←→点云 · ↑↓叶片 · M 新增";
+  hint.textContent = "WASD：W上 A左 S下 D右 · Ctrl+Z 撤销 / Ctrl+Y 重做 · ←→点云 · ↑↓叶片 · M 新增";
 }
 
 function applyLabelsToViewer() {
@@ -313,6 +426,7 @@ function renderLeaves() {
     leafList.appendChild(li);
   }
   updateHint();
+  renderGaps();
 }
 
 function updateFolderMeta() {
@@ -352,18 +466,12 @@ function handleInstanceClick(instanceId) {
   const wasExplicit = explicit;
   book.assign(activeId, instanceId);
   if (!wasExplicit) book.activeId = null;
-  persist();
-  applyLabelsToViewer();
-  renderLeaves();
-  renderList();
+  commitLabelChange();
   viewer.highlightInstance(instanceId);
 }
 
 function refreshAfterLabelChange() {
-  persist();
-  applyLabelsToViewer();
-  renderLeaves();
-  renderList();
+  commitLabelChange();
 }
 
 function unassignCurrentFile() {
@@ -425,6 +533,8 @@ function showApp(title, items, rootPath = "") {
   folderRoot = rootPath || inferFolderFromClouds() || "";
   if (folderRoot) writeLastFolder(folderRoot);
   restoreBook();
+  history.reset(book);
+  updateUndoButtons();
   dropScreen.hidden = true;
   appEl.hidden = false;
   finishModal.hidden = true;
@@ -448,7 +558,7 @@ function setLoading(visible, text, progress) {
 
 function parseInWorker(file, onProgress) {
   return new Promise((resolve, reject) => {
-    const current = new Worker("/static/parser.worker.js?v=19");
+    const current = new Worker("/static/parser.worker.js?v=21");
     const handle = (event) => {
       if (event.data.type === "progress") {
         onProgress?.(event.data.progress);
@@ -568,6 +678,15 @@ async function importBrowserFiles(entries) {
   const located = await locateFolderOnDisk(items);
   if (located) {
     await importLocalPath(located);
+    if (clouds.length > items.length) {
+      const opened = new Set(items.map((item) => item.fileName));
+      const keep = clouds.filter((item) => opened.has(item.fileName));
+      if (keep.length) {
+        const root = commonDir(keep.map((item) => item.id)) || located;
+        const title = String(root).split(/[/\\]/).filter(Boolean).pop() || "点云列表";
+        showApp(title, keep, root);
+      }
+    }
     return;
   }
   setStatus("");
@@ -598,6 +717,8 @@ function resetToImport() {
   folderKey = "";
   folderRoot = "";
   book.reset();
+  history.reset(book);
+  updateUndoButtons();
   viewer.clear();
   finishModal.hidden = true;
   appEl.hidden = true;
@@ -624,8 +745,7 @@ function labelPayload() {
 function addNewLeaf() {
   if (appEl.hidden || !finishModal.hidden) return;
   book.createLeaf();
-  persist();
-  renderLeaves();
+  commitLabelChange();
   viewer.highlightInstance(null);
   viewer.controls.enabled = true;
   viewport.focus({ preventScroll: true });
@@ -635,6 +755,9 @@ btnAddLeaf.addEventListener("click", () => {
   addNewLeaf();
 });
 
+btnUndo.addEventListener("click", () => undoLabels());
+btnRedo.addEventListener("click", () => redoLabels());
+
 window.addEventListener("keydown", (event) => {
   const el = document.activeElement;
   const tag = el?.tagName;
@@ -642,6 +765,21 @@ window.addEventListener("keydown", (event) => {
   if (tag === "SELECT") return;
   if (tag === "INPUT" && (el.type === "text" || el.type === "search" || el.type === "number")) return;
   if (!finishModal.hidden || appEl.hidden) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+    const key = String(event.key).toLowerCase();
+    if (key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoLabels();
+      else undoLabels();
+      return;
+    }
+    if (key === "y") {
+      event.preventDefault();
+      redoLabels();
+      return;
+    }
+    return;
+  }
   if (event.ctrlKey || event.altKey || event.metaKey) return;
   if (event.key === "Escape") {
     event.preventDefault();
@@ -717,6 +855,7 @@ function applySaveResult(data, payload) {
   const dir = data.exportDir || payload.exportDir || folderRoot || "";
   const bits = [];
   if (dir) bits.push(`已写入：${dir}`);
+  if (data.backupDir) bits.push(`原文件备份：${data.backupDir}`);
   if (exported.length) bits.push(`共 ${exported.length} 个 txt（末尾 leaf_id）`);
   const jsons = data.saved || [];
   if (jsons.length) bits.push(`json：${jsons[0]}`);
@@ -743,7 +882,20 @@ btnFinish.addEventListener("click", async () => {
   const cloudCount = clouds.length;
   const leafCount = book.leaves.length;
   const mappedFiles = clouds.filter((item) => assignedCount(item.id) > 0).length;
-  finishSummary.textContent = `共 ${cloudCount} 个点云，${leafCount} 个叶片标签；其中 ${mappedFiles} 个点云已有对应。`;
+  const unlabeled = clouds.filter((item) => assignedCount(item.id) === 0).length;
+  const missingLeaves = book.leaves.filter((leaf) =>
+    clouds.some((item) => leaf.assignments[item.id] == null)
+  ).length;
+  let gapText = "";
+  if (!book.leaves.length) gapText = "尚未创建叶片。";
+  else if (!unlabeled && !missingLeaves) gapText = "缺标检查：全部对应完成。";
+  else {
+    const parts = [];
+    if (unlabeled) parts.push(`${unlabeled} 个文件还没有任何对应`);
+    if (missingLeaves) parts.push(`${missingLeaves} 个叶片有缺天`);
+    gapText = `缺标：${parts.join("，")}。`;
+  }
+  finishSummary.textContent = `共 ${cloudCount} 个点云，${leafCount} 个叶片标签；其中 ${mappedFiles} 个点云已有对应。${gapText}`;
   finishSave.textContent = "正在确认打开文件所在的文件夹…";
   showFinishSaveActions();
   finishModal.hidden = false;

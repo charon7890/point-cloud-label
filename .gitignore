@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 venv/
 PC_label/
+sam3/
+.conda_envs_dir_test/

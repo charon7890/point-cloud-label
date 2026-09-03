@@ -132,6 +132,72 @@ export class LeafBook {
       assignments: { ...(leaf.assignments || {}) },
     })) : [];
     this.leaves.sort((a, b) => a.id - b.id);
-    this.activeId = null;
+    this.activeId = data?.activeId ?? null;
+  }
+}
+
+export class LabelHistory {
+  constructor(limit = 80) {
+    this.limit = limit;
+    this.entries = [];
+    this.index = -1;
+  }
+
+  snapshot(book) {
+    return {
+      activeId: book.activeId,
+      leaves: book.leaves.map((leaf) => ({
+        id: leaf.id,
+        name: leaf.name,
+        assignments: { ...leaf.assignments },
+      })),
+    };
+  }
+
+  reset(book) {
+    this.entries = [this.snapshot(book)];
+    this.index = 0;
+  }
+
+  push(book) {
+    const next = this.snapshot(book);
+    const current = this.entries[this.index];
+    if (current && JSON.stringify(current.leaves) === JSON.stringify(next.leaves)) return;
+    this.entries = this.entries.slice(0, this.index + 1);
+    this.entries.push(next);
+    if (this.entries.length > this.limit) this.entries.shift();
+    this.index = this.entries.length - 1;
+  }
+
+  apply(book, entry) {
+    book.leaves = (entry.leaves || []).map((leaf) => ({
+      id: leaf.id,
+      name: `${leaf.id}号叶片`,
+      assignments: { ...(leaf.assignments || {}) },
+    }));
+    book.leaves.sort((a, b) => a.id - b.id);
+    book.activeId = entry.activeId ?? null;
+  }
+
+  undo(book) {
+    if (this.index <= 0) return false;
+    this.index -= 1;
+    this.apply(book, this.entries[this.index]);
+    return true;
+  }
+
+  redo(book) {
+    if (this.index >= this.entries.length - 1) return false;
+    this.index += 1;
+    this.apply(book, this.entries[this.index]);
+    return true;
+  }
+
+  get canUndo() {
+    return this.index > 0;
+  }
+
+  get canRedo() {
+    return this.index >= 0 && this.index < this.entries.length - 1;
   }
 }
