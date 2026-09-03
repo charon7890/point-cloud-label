@@ -37,6 +37,29 @@ export function leafCss(id) {
   return `hsl(${(leafHue(id) * 360).toFixed(1)} 72% 58%)`;
 }
 
+export function asInstanceList(value) {
+  if (value == null) return [];
+  const list = Array.isArray(value) ? value : [value];
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    const n = Number(item);
+    if (!Number.isFinite(n) || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+export function cloneAssignments(assignments) {
+  const next = {};
+  for (const [cloudId, value] of Object.entries(assignments || {})) {
+    const ids = asInstanceList(value);
+    if (ids.length) next[cloudId] = ids;
+  }
+  return next;
+}
+
 export class LeafBook {
   constructor() {
     this.leaves = [];
@@ -77,21 +100,46 @@ export class LeafBook {
     return this.activeId;
   }
 
-  assign(cloudId, instanceId) {
+  instancesOf(leafId, cloudId) {
+    const leaf = this.get(leafId);
+    if (!leaf || cloudId == null) return [];
+    return asInstanceList(leaf.assignments[cloudId]);
+  }
+
+  assign(cloudId, instanceId, { append = false } = {}) {
+    const inst = Number(instanceId);
+    if (!Number.isFinite(inst)) return null;
+    const occupied = this.leafForInstance(cloudId, inst);
     let leaf = this.get(this.activeId);
-    if (!leaf) leaf = this.createLeaf();
-    for (const other of this.leaves) {
-      if (other !== leaf && other.assignments[cloudId] === instanceId) {
-        delete other.assignments[cloudId];
-      }
+    if (occupied) {
+      if (leaf && occupied.id === leaf.id) return leaf;
+      return null;
     }
-    leaf.assignments[cloudId] = instanceId;
+    if (!leaf) leaf = this.createLeaf();
+    const current = asInstanceList(leaf.assignments[cloudId]);
+    if (append) {
+      if (!current.includes(inst)) current.push(inst);
+      leaf.assignments[cloudId] = current;
+      return leaf;
+    }
+    leaf.assignments[cloudId] = [inst];
+    return leaf;
+  }
+
+  removeInstance(cloudId, instanceId, leafId = this.activeId) {
+    const leaf = this.get(leafId);
+    const inst = Number(instanceId);
+    const current = asInstanceList(leaf?.assignments[cloudId]);
+    if (!leaf || !Number.isFinite(inst) || !current.includes(inst)) return null;
+    const next = current.filter((id) => id !== inst);
+    if (next.length) leaf.assignments[cloudId] = next;
+    else delete leaf.assignments[cloudId];
     return leaf;
   }
 
   unassign(cloudId, leafId = this.activeId) {
     const leaf = this.get(leafId);
-    if (!leaf || leaf.assignments[cloudId] == null) return null;
+    if (!leaf || asInstanceList(leaf.assignments[cloudId]).length === 0) return null;
     delete leaf.assignments[cloudId];
     return leaf;
   }
@@ -105,15 +153,17 @@ export class LeafBook {
   }
 
   leafForInstance(cloudId, instanceId) {
-    return this.leaves.find((leaf) => leaf.assignments[cloudId] === instanceId) || null;
+    const inst = Number(instanceId);
+    if (!Number.isFinite(inst)) return null;
+    return this.leaves.find((leaf) => asInstanceList(leaf.assignments[cloudId]).includes(inst)) || null;
   }
 
   labeledMap(cloudId) {
     const map = new Map();
     for (const leaf of this.leaves) {
-      const instanceId = leaf.assignments[cloudId];
-      if (instanceId == null) continue;
-      map.set(instanceId, { leafId: leaf.id, rgb: leafRgb(leaf.id) });
+      for (const instanceId of asInstanceList(leaf.assignments[cloudId])) {
+        map.set(instanceId, { leafId: leaf.id, rgb: leafRgb(leaf.id) });
+      }
     }
     return map;
   }
@@ -121,16 +171,22 @@ export class LeafBook {
   toJSON() {
     return {
       nextId: this.nextAvailableId(),
-      leaves: this.leaves,
+      leaves: this.leaves.map((leaf) => ({
+        id: leaf.id,
+        name: leaf.name,
+        assignments: cloneAssignments(leaf.assignments),
+      })),
     };
   }
 
   fromJSON(data) {
-    this.leaves = Array.isArray(data?.leaves) ? data.leaves.map((leaf) => ({
-      id: leaf.id,
-      name: `${leaf.id}号叶片`,
-      assignments: { ...(leaf.assignments || {}) },
-    })) : [];
+    this.leaves = Array.isArray(data?.leaves)
+      ? data.leaves.map((leaf) => ({
+          id: leaf.id,
+          name: `${leaf.id}号叶片`,
+          assignments: cloneAssignments(leaf.assignments),
+        }))
+      : [];
     this.leaves.sort((a, b) => a.id - b.id);
     this.activeId = data?.activeId ?? null;
   }
@@ -149,7 +205,7 @@ export class LabelHistory {
       leaves: book.leaves.map((leaf) => ({
         id: leaf.id,
         name: leaf.name,
-        assignments: { ...leaf.assignments },
+        assignments: cloneAssignments(leaf.assignments),
       })),
     };
   }
@@ -173,7 +229,7 @@ export class LabelHistory {
     book.leaves = (entry.leaves || []).map((leaf) => ({
       id: leaf.id,
       name: `${leaf.id}号叶片`,
-      assignments: { ...(leaf.assignments || {}) },
+      assignments: cloneAssignments(leaf.assignments),
     }));
     book.leaves.sort((a, b) => a.id - b.id);
     book.activeId = entry.activeId ?? null;

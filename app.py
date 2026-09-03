@@ -532,6 +532,20 @@ def _safe_export_name(name: str) -> str:
     return safe or "labels"
 
 
+def _assignment_instance_ids(value) -> list[int]:
+    """One file may map several split instances onto the same leaf."""
+    if value is None:
+        return []
+    raw = value if isinstance(value, (list, tuple)) else [value]
+    ids: list[int] = []
+    for item in raw:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 def instance_to_leaf_maps(payload: dict) -> dict[str, dict[int, int]]:
     """cloud_id -> {original inst_class -> leaf_id}."""
     by_cloud: dict[str, dict[int, int]] = {}
@@ -543,15 +557,10 @@ def instance_to_leaf_maps(payload: dict) -> dict[str, dict[int, int]]:
             continue
         assignments = leaf.get("assignments") or {}
         for cloud_id, instance_id in assignments.items():
-            if instance_id is None:
-                continue
-            try:
-                inst = int(instance_id)
-            except (TypeError, ValueError):
-                continue
-            key = str(cloud_id)
-            by_cloud.setdefault(key, {})[inst] = leaf_id
-            by_cloud.setdefault(_norm_path_key(key), {})[inst] = leaf_id
+            for inst in _assignment_instance_ids(instance_id):
+                key = str(cloud_id)
+                by_cloud.setdefault(key, {})[inst] = leaf_id
+                by_cloud.setdefault(_norm_path_key(key), {})[inst] = leaf_id
     return by_cloud
 
 

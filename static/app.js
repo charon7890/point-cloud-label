@@ -5,9 +5,20 @@ import {
   toCloudItems,
   unpackCloud,
   walkEntry,
-} from "./format.js?v=21";
-import { leafCss, LeafBook, LabelHistory } from "./labels.js?v=21";
-import { PointCloudViewer } from "./viewer.js?v=21";
+} from "./format.js?v=25";
+import { asInstanceList, leafCss, LeafBook, LabelHistory } from "./labels.js?v=28";
+import { PointCloudViewer } from "./viewer.js?v=27";
+import {
+  HOTKEY_DEFS,
+  PAN_INTERNAL,
+  assignHotkey,
+  bindingFromEvent,
+  cloneHotkeyMap,
+  formatBinding,
+  loadHotkeys,
+  matchHotkeyAction,
+  saveHotkeys,
+} from "./hotkeys.js?v=26";
 
 const dropScreen = document.getElementById("drop-screen");
 const dropZone = document.getElementById("drop-zone");
@@ -51,10 +62,18 @@ const btnExit = document.getElementById("btn-exit");
 const btnImportNew = document.getElementById("btn-import-new");
 const btnFinishCancel = document.getElementById("btn-finish-cancel");
 const hint = document.getElementById("hint");
+const btnHotkeys = document.getElementById("btn-hotkeys");
+const hotkeyPanel = document.getElementById("hotkey-panel");
+const hotkeyList = document.getElementById("hotkey-list");
+const btnHotkeysClose = document.getElementById("btn-hotkeys-close");
+const btnHotkeysReset = document.getElementById("btn-hotkeys-reset");
 
 const viewer = new PointCloudViewer(viewport);
 const book = new LeafBook();
 const history = new LabelHistory();
+let hotkeys = loadHotkeys();
+let capturingHotkey = null;
+let mergeLeafId = null;
 const cache = new Map();
 const inflight = new Map();
 let clouds = [];
@@ -132,7 +151,12 @@ function remapBookToClouds() {
     for (const [cloudId, instanceId] of Object.entries(leaf.assignments || {})) {
       const rel = String(cloudId).replace(/\\/g, "/");
       const name = rel.split("/").pop();
-      next[byRel.get(rel) || byName.get(name) || cloudId] = instanceId;
+      const mapped = byRel.get(rel) || byName.get(name) || cloudId;
+      const merged = asInstanceList(next[mapped]);
+      for (const id of asInstanceList(instanceId)) {
+        if (!merged.includes(id)) merged.push(id);
+      }
+      if (merged.length) next[mapped] = merged;
     }
     leaf.assignments = next;
   }
@@ -238,7 +262,7 @@ async function resolveOriginalFolder() {
 }
 
 function assignedCount(cloudId) {
-  return book.leaves.filter((leaf) => leaf.assignments[cloudId] != null).length;
+  return book.leaves.filter((leaf) => book.instancesOf(leaf.id, cloudId).length > 0).length;
 }
 
 function updateUndoButtons() {
@@ -249,6 +273,35 @@ function updateUndoButtons() {
 
 function cloudLabel(item) {
   return `${item.dateLabel} ${item.fileName}`;
+}
+
+function firstAssignedIndex(leaf) {
+  return clouds.findIndex((item) => book.instancesOf(leaf.id, item.id).length > 0);
+}
+
+function firstLabeledCloudIndex() {
+  return clouds.findIndex((item) => assignedCount(item.id) > 0);
+}
+
+function missingAfterStart(leaf) {
+  const start = firstAssignedIndex(leaf);
+  if (start < 0) return [];
+  return clouds.filter((item, index) => index > start && book.instancesOf(leaf.id, item.id).length === 0);
+}
+
+function unlabeledAfterStart() {
+  const start = firstLabeledCloudIndex();
+  if (start < 0) return clouds.filter((item) => assignedCount(item.id) === 0);
+  return clouds.filter((item, index) => index > start && assignedCount(item.id) === 0);
+}
+
+function gapReport() {
+  return {
+    unlabeled: unlabeledAfterStart(),
+    leafGaps: book.leaves
+      .map((leaf) => ({ leaf, missing: missingAfterStart(leaf) }))
+      .filter((row) => row.missing.length),
+  };
 }
 
 function renderGaps() {
@@ -264,28 +317,29 @@ function renderGaps() {
     gapSummary.textContent = `共 ${clouds.length} 个点云，尚未创建叶片`;
     return;
   }
-  const unlabeled = clouds.filter((item) => assignedCount(item.id) === 0);
-  const leafGaps = book.leaves
-    .map((leaf) => ({
-      leaf,
-      missing: clouds.filter((item) => leaf.assignments[item.id] == null),
-    }))
-    .filter((row) => row.missing.length);
+  const { unlabeled, leafGaps } = gapReport();
   if (!unlabeled.length && !leafGaps.length) {
     gapSummary.className = "muted ok";
-    gapSummary.textContent = `各叶片已在全部 ${clouds.length} 个点云中对应`;
+    gapSummary.textContent = firstLabeledCloudIndex() < 0
+      ? "尚未对应任何日期"
+      : "从各叶片首次对应起，后面没有缺天";
     return;
   }
   gapSummary.className = "muted";
   const bits = [];
-  if (unlabeled.length) bits.push(`${unlabeled.length} 个文件尚未对应任何叶片`);
-  if (leafGaps.length) bits.push(`${leafGaps.length} 个叶片有缺天`);
+  if (unlabeled.length) bits.push(`${unlabeled.length} 个文件在开始对应之后仍未标`);
+  if (leafGaps.length) bits.push(`${leafGaps.length} 个叶片后面有缺天`);
   gapSummary.textContent = bits.join("；");
 
-  for (const item of unlabeled) {
+  if (unlabeled.length) {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="gap-title">未对应：${item.dateLabel}</span><span class="gap-sub">${item.fileName}</span>`;
-    li.addEventListener("click", () => selectCloud(item.id));
+    const preview = unlabeled
+      .slice(0, 4)
+      .map((item) => item.dateLabel)
+      .join("、");
+    const more = unlabeled.length > 4 ? ` 等 ${unlabeled.length} 天` : "";
+    li.innerHTML = `<span class="gap-title">开始对应之后仍有 ${unlabeled.length} 个文件未标</span><span class="gap-sub">${preview}${more}</span>`;
+    li.addEventListener("click", () => selectCloud(unlabeled[0].id));
     gapList.appendChild(li);
   }
   for (const row of leafGaps) {
@@ -295,7 +349,7 @@ function renderGaps() {
       .map((item) => item.dateLabel)
       .join("、");
     const more = row.missing.length > 4 ? ` 等 ${row.missing.length} 天` : "";
-    li.innerHTML = `<span class="gap-title">${row.leaf.name}缺 ${row.missing.length} 天</span><span class="gap-sub">${preview}${more}</span>`;
+    li.innerHTML = `<span class="gap-title">${row.leaf.name}后面缺 ${row.missing.length} 天</span><span class="gap-sub">${preview}${more}</span>`;
     li.addEventListener("click", () => {
       book.activeId = row.leaf.id;
       selectCloud(row.missing[0].id);
@@ -305,6 +359,23 @@ function renderGaps() {
   }
 }
 
+function highlightActiveLeaf() {
+  if (activeId == null || book.activeId == null) {
+    viewer.highlightInstance(null);
+    return;
+  }
+  viewer.highlightInstance(book.instancesOf(book.activeId, activeId));
+}
+
+function syncMergeMode() {
+  if (mergeLeafId != null && mergeLeafId !== book.activeId) mergeLeafId = null;
+}
+
+function setMergeMode(on, leafId = book.activeId) {
+  mergeLeafId = on && leafId != null ? leafId : null;
+  if (mergeLeafId != null) book.activeId = mergeLeafId;
+}
+
 function commitLabelChange() {
   history.push(book);
   persist();
@@ -312,11 +383,7 @@ function commitLabelChange() {
   renderLeaves();
   renderList();
   updateUndoButtons();
-  viewer.highlightInstance(
-    activeId != null && book.activeId != null
-      ? book.get(book.activeId)?.assignments[activeId] ?? null
-      : null
-  );
+  highlightActiveLeaf();
 }
 
 function undoLabels() {
@@ -326,11 +393,7 @@ function undoLabels() {
   renderLeaves();
   renderList();
   updateUndoButtons();
-  const inst =
-    activeId != null && book.activeId != null
-      ? book.get(book.activeId)?.assignments[activeId] ?? null
-      : null;
-  viewer.highlightInstance(inst);
+  highlightActiveLeaf();
 }
 
 function redoLabels() {
@@ -340,23 +403,137 @@ function redoLabels() {
   renderLeaves();
   renderList();
   updateUndoButtons();
-  const inst =
-    activeId != null && book.activeId != null
-      ? book.get(book.activeId)?.assignments[activeId] ?? null
-      : null;
-  viewer.highlightInstance(inst);
+  highlightActiveLeaf();
+}
+
+function shortcutText(id) {
+  return formatBinding(hotkeys[id]);
+}
+
+function updateShortcutLabels() {
+  if (btnAddLeaf) btnAddLeaf.textContent = `新增叶片 (${shortcutText("addLeaf")})`;
+  if (btnUndo) btnUndo.title = shortcutText("undo");
+  if (btnRedo) btnRedo.title = shortcutText("redo");
+  updateHint();
+}
+
+function renderHotkeyList() {
+  if (!hotkeyList) return;
+  hotkeyList.innerHTML = "";
+  for (const def of HOTKEY_DEFS) {
+    const li = document.createElement("li");
+    const bind = document.createElement("button");
+    bind.type = "button";
+    bind.className = "btn hotkey-bind";
+    bind.dataset.id = def.id;
+    if (capturingHotkey === def.id) {
+      bind.classList.add("listening");
+      bind.textContent = "按下新键…";
+    } else {
+      bind.textContent = shortcutText(def.id);
+    }
+    li.innerHTML = `<span class="hotkey-label">${def.label}</span>`;
+    li.appendChild(bind);
+    bind.addEventListener("click", (event) => {
+      event.stopPropagation();
+      capturingHotkey = def.id;
+      renderHotkeyList();
+    });
+    hotkeyList.appendChild(li);
+  }
+}
+
+function openHotkeyPanel() {
+  hotkeyPanel.hidden = false;
+  capturingHotkey = null;
+  renderHotkeyList();
+}
+
+function closeHotkeyPanel() {
+  hotkeyPanel.hidden = true;
+  capturingHotkey = null;
+}
+
+function applyCapturedHotkey(event) {
+  if (!capturingHotkey) return;
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
+  if (event.key === "Escape" && capturingHotkey !== "exitDrag") {
+    capturingHotkey = null;
+    renderHotkeyList();
+    return;
+  }
+  hotkeys = assignHotkey(hotkeys, capturingHotkey, bindingFromEvent(event));
+  saveHotkeys(hotkeys);
+  capturingHotkey = null;
+  renderHotkeyList();
+  updateShortcutLabels();
+  renderLeaves();
+}
+
+function runHotkey(action, event) {
+  switch (action) {
+    case "undo":
+      undoLabels();
+      return;
+    case "redo":
+      redoLabels();
+      return;
+    case "exitDrag":
+      viewer.setViewDragMode(false);
+      viewer.clearPanKeys();
+      if (mergeLeafId != null) {
+        setMergeMode(false);
+        renderLeaves();
+        updateHint();
+      }
+      return;
+    case "panUp":
+    case "panDown":
+    case "panLeft":
+    case "panRight":
+      viewer.setPanKey(PAN_INTERNAL[action], true);
+      return;
+    case "unassign":
+      handleDeleteKey(false);
+      return;
+    case "deleteLeaf":
+      handleDeleteKey(true);
+      return;
+    case "addLeaf":
+      if (!event.repeat) addNewLeaf();
+      return;
+    case "prevCloud":
+      stepCloud(-1);
+      return;
+    case "nextCloud":
+      stepCloud(1);
+      return;
+    case "prevLeaf":
+      stepLeaf(-1);
+      return;
+    case "nextLeaf":
+      stepLeaf(1);
+      return;
+    default:
+  }
 }
 
 function updateHint() {
   const active = book.get(book.activeId);
+  const pan = `${shortcutText("panUp")}上 ${shortcutText("panLeft")}左 ${shortcutText("panDown")}下 ${shortcutText("panRight")}右`;
   if (active) {
-    hint.textContent = `已选 ${active.name}：WASD（W上 A左 S下 D右）· Ctrl+Z 撤销 · ↑↓叶片 ←→点云 · M 新增`;
+    const merging = mergeLeafId === active.id;
+    hint.textContent = merging
+      ? `合并到 ${active.name}：单击未对应实例接到本片，再点已合并的块可去掉 · ${shortcutText("exitDrag")} 结束`
+      : `已选 ${active.name}：点 + 可合并本文件分割块 · ${pan} · ${shortcutText("undo")} 撤销 · ${shortcutText("addLeaf")} 新增`;
     pickBadge.hidden = false;
-    pickBadge.textContent = `将标注为 ${active.name}（Delete 取消当前文件对应）`;
+    pickBadge.textContent = merging
+      ? `合并到 ${active.name}（再点 + 或 ${shortcutText("exitDrag")} 结束）`
+      : `将标注为 ${active.name}（+ 合并分割块 · ${shortcutText("unassign")} 取消当前文件对应）`;
     return;
   }
   pickBadge.hidden = true;
-  hint.textContent = "WASD：W上 A左 S下 D右 · Ctrl+Z 撤销 / Ctrl+Y 重做 · ←→点云 · ↑↓叶片 · M 新增";
+  hint.textContent = `${pan} · ${shortcutText("undo")} 撤销 / ${shortcutText("redo")} 重做 · ${shortcutText("prevCloud")}/${shortcutText("nextCloud")}点云 · ${shortcutText("prevLeaf")}/${shortcutText("nextLeaf")}叶片 · ${shortcutText("addLeaf")} 新增`;
 }
 
 function applyLabelsToViewer() {
@@ -368,31 +545,63 @@ function applyLabelsToViewer() {
 }
 
 function renderLeaves() {
+  syncMergeMode();
   leafList.innerHTML = "";
   if (!book.leaves.length) {
-    leafMeta.textContent = "单击点云中的实例，或按 M 新增叶片";
+    leafMeta.textContent = `单击点云中的实例，或按 ${shortcutText("addLeaf")} 新增叶片`;
   } else {
     const currentAssigned = activeId ? assignedCount(activeId) : 0;
-    const extra = book.activeId != null ? "；Delete 只取消当前文件对应" : "";
+    const extra = book.activeId != null ? `；${shortcutText("unassign")} 只取消当前文件对应` : "";
     leafMeta.textContent = `共 ${book.leaves.length} 个叶片；当前文件已对应 ${currentAssigned} 个${extra}`;
   }
   for (const leaf of book.leaves) {
     const li = document.createElement("li");
-    const assignedHere = activeId != null && leaf.assignments[activeId] != null;
+    const partsHere = activeId != null ? book.instancesOf(leaf.id, activeId) : [];
+    const assignedHere = partsHere.length > 0;
     const fileCount = Object.keys(leaf.assignments).length;
+    const merging = mergeLeafId === leaf.id;
     if (leaf.id === book.activeId) li.classList.add("active");
-    li.innerHTML = `
-      <span class="left">
-        <span class="swatch" style="background:${leafCss(leaf.id)}"></span>
-        <span>
+    if (merging) li.classList.add("merging");
+    const hereText = assignedHere
+      ? partsHere.length > 1
+        ? `当前文件已对应 ${partsHere.length} 块`
+        : "当前文件已对应"
+      : "当前文件未对应";
+    const left = document.createElement("span");
+    left.className = "left";
+    left.innerHTML = `
+      <span class="swatch" style="background:${leafCss(leaf.id)}"></span>
+      <span>
+        <span class="name-row">
           <span class="inst-id">${leaf.name}</span>
-          <span class="sub">${assignedHere ? "当前文件已对应" : "当前文件未对应"} · ${fileCount} 个点云</span>
         </span>
+        <span class="sub">${hereText} · ${fileCount} 个点云</span>
       </span>`;
+    if (leaf.id === book.activeId) {
+      const mergeBtn = document.createElement("button");
+      mergeBtn.type = "button";
+      mergeBtn.className = `btn ghost leaf-merge${merging ? " on" : ""}`;
+      mergeBtn.textContent = "+";
+      mergeBtn.title = merging
+        ? "结束合并。单击未对应实例接到本叶片，再点已合并的块可去掉"
+        : "在本文件追加分割块，合成一整片叶片";
+      mergeBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        book.activeId = leaf.id;
+        setMergeMode(mergeLeafId !== leaf.id, leaf.id);
+        highlightActiveLeaf();
+        renderLeaves();
+        updateHint();
+        viewport.focus({ preventScroll: true });
+      });
+      left.querySelector(".name-row").appendChild(mergeBtn);
+    }
+    li.appendChild(left);
     li.addEventListener("click", () => {
-      book.toggleActive(leaf.id);
-      const inst = activeId != null ? leaf.assignments[activeId] : null;
-      viewer.highlightInstance(book.activeId === leaf.id ? inst ?? null : null);
+      const next = book.toggleActive(leaf.id);
+      if (next !== leaf.id) setMergeMode(false);
+      else if (mergeLeafId !== leaf.id) setMergeMode(false);
+      highlightActiveLeaf();
       renderLeaves();
       updateHint();
     });
@@ -456,18 +665,29 @@ function handleInstanceClick(instanceId) {
   if (!activeId) return;
   if (instanceId == null) return;
   const existing = book.leafForInstance(activeId, instanceId);
-  const explicit = book.activeId != null;
-  if (!explicit && existing) {
+  const merging = mergeLeafId != null && book.activeId === mergeLeafId;
+  if (existing) {
+    if (merging && existing.id === mergeLeafId) {
+      if (!book.removeInstance(activeId, instanceId, mergeLeafId)) return;
+      commitLabelChange();
+      return;
+    }
     book.activeId = existing.id;
-    viewer.highlightInstance(instanceId);
+    if (mergeLeafId !== existing.id) setMergeMode(false);
+    highlightActiveLeaf();
     renderLeaves();
     return;
   }
-  const wasExplicit = explicit;
-  book.assign(activeId, instanceId);
+  if (merging) {
+    if (!book.assign(activeId, instanceId, { append: true })) return;
+    commitLabelChange();
+    return;
+  }
+  const wasExplicit = book.activeId != null;
+  const leaf = book.assign(activeId, instanceId);
+  if (!leaf) return;
   if (!wasExplicit) book.activeId = null;
   commitLabelChange();
-  viewer.highlightInstance(instanceId);
 }
 
 function refreshAfterLabelChange() {
@@ -477,16 +697,16 @@ function refreshAfterLabelChange() {
 function unassignCurrentFile() {
   if (book.activeId == null || !activeId) return false;
   if (!book.unassign(activeId, book.activeId)) return false;
+  setMergeMode(false);
   refreshAfterLabelChange();
-  viewer.highlightInstance(null);
   return true;
 }
 
 function deleteEntireLeaf() {
   if (book.activeId == null) return;
   book.remove(book.activeId);
+  setMergeMode(false);
   refreshAfterLabelChange();
-  viewer.highlightInstance(null);
 }
 
 function handleDeleteKey(shift) {
@@ -517,8 +737,7 @@ function stepLeaf(delta) {
   else next = (index + delta + book.leaves.length) % book.leaves.length;
   const leaf = book.leaves[next];
   book.activeId = leaf.id;
-  const inst = activeId != null ? leaf.assignments[activeId] : null;
-  viewer.highlightInstance(inst ?? null);
+  highlightActiveLeaf();
   renderLeaves();
   requestAnimationFrame(() => {
     leafList.querySelector("li.active")?.scrollIntoView({ block: "nearest" });
@@ -535,6 +754,8 @@ function showApp(title, items, rootPath = "") {
   restoreBook();
   history.reset(book);
   updateUndoButtons();
+  document.body.classList.add("app-open");
+  updateShortcutLabels();
   dropScreen.hidden = true;
   appEl.hidden = false;
   finishModal.hidden = true;
@@ -558,7 +779,7 @@ function setLoading(visible, text, progress) {
 
 function parseInWorker(file, onProgress) {
   return new Promise((resolve, reject) => {
-    const current = new Worker("/static/parser.worker.js?v=21");
+    const current = new Worker("/static/parser.worker.js?v=25");
     const handle = (event) => {
       if (event.data.type === "progress") {
         onProgress?.(event.data.progress);
@@ -626,9 +847,7 @@ async function prefetchAll() {
 function afterCloudShown(item, cloud) {
   currentMeta.textContent = `${item.relativePath} · 显示 ${cloud.count.toLocaleString()} 点`;
   applyLabelsToViewer();
-  const activeLeaf = book.get(book.activeId);
-  const inst = activeLeaf && activeId ? activeLeaf.assignments[activeId] : null;
-  viewer.highlightInstance(inst ?? null);
+  highlightActiveLeaf();
   renderLeaves();
   renderList();
 }
@@ -723,6 +942,9 @@ function resetToImport() {
   finishModal.hidden = true;
   appEl.hidden = true;
   dropScreen.hidden = false;
+  document.body.classList.remove("app-open");
+  closeHotkeyPanel();
+  setMergeMode(false);
   setStatus("");
   setLoading(false, "", 0);
   renderLeaves();
@@ -745,8 +967,8 @@ function labelPayload() {
 function addNewLeaf() {
   if (appEl.hidden || !finishModal.hidden) return;
   book.createLeaf();
+  setMergeMode(false);
   commitLabelChange();
-  viewer.highlightInstance(null);
   viewer.controls.enabled = true;
   viewport.focus({ preventScroll: true });
 }
@@ -759,84 +981,52 @@ btnUndo.addEventListener("click", () => undoLabels());
 btnRedo.addEventListener("click", () => redoLabels());
 
 window.addEventListener("keydown", (event) => {
+  if (capturingHotkey) {
+    event.preventDefault();
+    applyCapturedHotkey(event);
+    return;
+  }
   const el = document.activeElement;
   const tag = el?.tagName;
   if (tag === "TEXTAREA") return;
   if (tag === "SELECT") return;
   if (tag === "INPUT" && (el.type === "text" || el.type === "search" || el.type === "number")) return;
+  if (!hotkeyPanel.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeHotkeyPanel();
+    }
+    return;
+  }
   if (!finishModal.hidden || appEl.hidden) return;
-  if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-    const key = String(event.key).toLowerCase();
-    if (key === "z") {
-      event.preventDefault();
-      if (event.shiftKey) redoLabels();
-      else undoLabels();
-      return;
-    }
-    if (key === "y") {
-      event.preventDefault();
-      redoLabels();
-      return;
-    }
-    return;
-  }
-  if (event.ctrlKey || event.altKey || event.metaKey) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    viewer.setViewDragMode(false);
-    viewer.clearPanKeys();
-    return;
-  }
-  const wasdCode =
-    event.code === "KeyW" || event.code === "KeyA" || event.code === "KeyS" || event.code === "KeyD"
-      ? event.code
-      : { w: "KeyW", a: "KeyA", s: "KeyS", d: "KeyD" }[String(event.key).toLowerCase()];
-  if (wasdCode) {
-    event.preventDefault();
-    viewer.setPanKey(wasdCode, true);
-    return;
-  }
-  if (event.key === "Delete") {
-    event.preventDefault();
-    handleDeleteKey(event.shiftKey);
-    return;
-  }
-  if ((event.key === "m" || event.key === "M") && !event.repeat) {
-    event.preventDefault();
-    addNewLeaf();
-    return;
-  }
-  if (event.key === "ArrowLeft") {
-    event.preventDefault();
-    stepCloud(-1);
-    return;
-  }
-  if (event.key === "ArrowRight") {
-    event.preventDefault();
-    stepCloud(1);
-    return;
-  }
-  if (event.key === "ArrowUp") {
-    event.preventDefault();
-    stepLeaf(-1);
-    return;
-  }
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    stepLeaf(1);
-  }
+  const action = matchHotkeyAction(hotkeys, event);
+  if (!action) return;
+  event.preventDefault();
+  runHotkey(action, event);
 });
 
 window.addEventListener("keyup", (event) => {
-  const wasdCode =
-    event.code === "KeyW" || event.code === "KeyA" || event.code === "KeyS" || event.code === "KeyD"
-      ? event.code
-      : { w: "KeyW", a: "KeyA", s: "KeyS", d: "KeyD" }[String(event.key).toLowerCase()];
-  if (wasdCode) viewer.setPanKey(wasdCode, false);
+  for (const id of ["panUp", "panDown", "panLeft", "panRight"]) {
+    if (hotkeys[id]?.code === event.code) viewer.setPanKey(PAN_INTERNAL[id], false);
+  }
 });
 
 window.addEventListener("blur", () => {
   viewer.clearPanKeys();
+});
+
+btnHotkeys.addEventListener("click", () => {
+  if (hotkeyPanel.hidden) openHotkeyPanel();
+  else closeHotkeyPanel();
+});
+btnHotkeysClose.addEventListener("click", () => closeHotkeyPanel());
+btnHotkeysReset.addEventListener("click", () => {
+  hotkeys = cloneHotkeyMap();
+  saveHotkeys(hotkeys);
+  capturingHotkey = null;
+  renderHotkeyList();
+  updateShortcutLabels();
+  renderLeaves();
 });
 
 function showFinishDone() {
@@ -882,17 +1072,16 @@ btnFinish.addEventListener("click", async () => {
   const cloudCount = clouds.length;
   const leafCount = book.leaves.length;
   const mappedFiles = clouds.filter((item) => assignedCount(item.id) > 0).length;
-  const unlabeled = clouds.filter((item) => assignedCount(item.id) === 0).length;
-  const missingLeaves = book.leaves.filter((leaf) =>
-    clouds.some((item) => leaf.assignments[item.id] == null)
-  ).length;
+  const { unlabeled, leafGaps } = gapReport();
+  const unlabeledCount = unlabeled.length;
+  const missingLeaves = leafGaps.length;
   let gapText = "";
   if (!book.leaves.length) gapText = "尚未创建叶片。";
-  else if (!unlabeled && !missingLeaves) gapText = "缺标检查：全部对应完成。";
+  else if (!unlabeledCount && !missingLeaves) gapText = "缺标检查：从首次对应起后面没有缺天。";
   else {
     const parts = [];
-    if (unlabeled) parts.push(`${unlabeled} 个文件还没有任何对应`);
-    if (missingLeaves) parts.push(`${missingLeaves} 个叶片有缺天`);
+    if (unlabeledCount) parts.push(`${unlabeledCount} 个文件在开始对应之后仍未标`);
+    if (missingLeaves) parts.push(`${missingLeaves} 个叶片后面有缺天`);
     gapText = `缺标：${parts.join("，")}。`;
   }
   finishSummary.textContent = `共 ${cloudCount} 个点云，${leafCount} 个叶片标签；其中 ${mappedFiles} 个点云已有对应。${gapText}`;
@@ -1049,3 +1238,5 @@ colorModeSelect.addEventListener("change", () => {
 });
 
 btnReset.addEventListener("click", () => viewer.resetView());
+
+updateShortcutLabels();

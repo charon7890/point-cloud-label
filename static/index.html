@@ -4,9 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>点云浏览器</title>
-  <link rel="stylesheet" href="/static/styles.css?v=10" />
+  <link rel="stylesheet" href="/static/styles.css?v=16" />
 </head>
 <body>
+  <button type="button" id="btn-hotkeys" class="btn hotkey-fab">设置</button>
+  <div id="hotkey-panel" class="hotkey-panel" hidden>
+    <div class="hotkey-panel-head">
+      <h2>快捷键设置</h2>
+      <button type="button" id="btn-hotkeys-close" class="btn ghost">关闭</button>
+    </div>
+    <p class="muted">点击右侧按键，再按下新的键。若与已有功能冲突，会自动对调。</p>
+    <ul id="hotkey-list" class="hotkey-list"></ul>
+    <div class="hotkey-panel-foot">
+      <button type="button" id="btn-hotkeys-reset" class="btn">恢复默认</button>
+    </div>
+  </div>
   <div id="drop-screen" class="drop-screen">
     <div class="drop-card" id="drop-zone">
       <div class="drop-mark" aria-hidden="true"></div>
@@ -127,6 +139,6 @@
       }
     }
   </script>
-  <script type="module" src="/static/app.js?v=21"></script>
+  <script type="module" src="/static/app.js?v=30"></script>
 </body>
 </html>

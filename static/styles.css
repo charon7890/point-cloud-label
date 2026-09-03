@@ -28,6 +28,10 @@ body {
   font: 14px/1.45 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
+body.app-open {
+  overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -110,6 +114,15 @@ select {
   color: var(--danger);
 }
 
+.btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
 .btn:disabled {
   opacity: 0.45;
   cursor: default;
@@ -137,6 +150,8 @@ select {
 
 .app {
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 260px 1fr 280px;
 }
@@ -147,6 +162,8 @@ select {
   border-right: 1px solid var(--line);
   background: var(--panel);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar-head {
@@ -215,6 +232,8 @@ select {
   border-left: 1px solid var(--line);
   background: var(--panel);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .leaf-head {
@@ -261,9 +280,10 @@ select {
 .gap-panel {
   border-top: 1px solid var(--line);
   padding: 10px 12px 8px;
-  max-height: 34%;
+  flex: 0 1 160px;
+  max-height: 160px;
+  min-height: 0;
   overflow: auto;
-  flex: 0 1 auto;
 }
 
 .gap-panel h3 {
@@ -349,6 +369,35 @@ select {
   background: var(--accent);
 }
 
+.leaf-list .name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.leaf-list .name-row .inst-id {
+  display: inline;
+}
+
+.leaf-list .leaf-merge {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  line-height: 20px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.leaf-list .leaf-merge.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.leaf-list li.merging {
+  border-color: var(--ok);
+}
+
 .leaf-list .inst-id {
   display: block;
   font-weight: 600;
@@ -378,6 +427,7 @@ select {
   justify-content: flex-end;
   padding: 12px 16px 16px;
   border-top: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 
 .leaf-foot .btn {
@@ -420,6 +470,88 @@ select {
   margin-top: 18px;
 }
 
+.hotkey-fab {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 40;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+body.app-open .hotkey-fab {
+  top: 58px;
+  left: calc(260px + 12px);
+}
+
+.hotkey-panel {
+  position: fixed;
+  top: 48px;
+  left: 12px;
+  z-index: 45;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+body.app-open .hotkey-panel {
+  top: 96px;
+  left: calc(260px + 12px);
+}
+
+.hotkey-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hotkey-panel-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.hotkey-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.hotkey-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.hotkey-list .hotkey-label {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.hotkey-list .hotkey-bind {
+  flex: 0 0 auto;
+  min-width: 108px;
+}
+
+.hotkey-list .hotkey-bind.listening {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hotkey-panel-foot {
+  margin-top: 12px;
+}
+
 .pick-badge {
   position: absolute;
   top: 12px;
@@ -432,10 +564,17 @@ select {
   z-index: 1;
 }
 
+body.app-open .pick-badge {
+  top: 12px;
+  left: 76px;
+}
+
 .stage {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .toolbar {
@@ -507,10 +646,16 @@ select {
 .hint {
   position: absolute;
   left: 16px;
+  right: 16px;
   bottom: 12px;
   margin: 0;
+  max-width: 100%;
   color: var(--muted);
   pointer-events: none;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .overlay {
@@ -561,12 +706,27 @@ select {
   .app {
     grid-template-columns: 220px 1fr 240px;
   }
+
+  body.app-open .hotkey-fab,
+  body.app-open .hotkey-panel {
+    left: calc(220px + 12px);
+  }
 }
 
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: 180px 1fr 220px;
+  }
+
+  body.app-open .hotkey-fab {
+    top: 12px;
+    left: 12px;
+  }
+
+  body.app-open .hotkey-panel {
+    top: 48px;
+    left: 12px;
   }
 
   .sidebar {

@@ -162,10 +162,10 @@ export class PointCloudViewer {
     this.colorMode = "instance";
     this.pointSize = 1.8;
     this.labeled = new Map();
-    this.selectedInstance = null;
+    this.selectedInstances = [];
     this.onInstanceClick = null;
     this._fitted = null;
-    this._boxHelper = null;
+    this._boxHelpers = [];
     this._pointerDown = null;
     this._rightPan = null;
     this._lastRightDown = 0;
@@ -335,8 +335,10 @@ export class PointCloudViewer {
     if (this.cloud) this._rebuildLayers();
   }
 
-  highlightInstance(id) {
-    this.selectedInstance = id == null ? null : id;
+  highlightInstance(idOrIds) {
+    if (idOrIds == null) this.selectedInstances = [];
+    else if (Array.isArray(idOrIds)) this.selectedInstances = idOrIds.filter((id) => id != null);
+    else this.selectedInstances = [idOrIds];
     this._updateSelectionBox();
   }
 
@@ -475,26 +477,39 @@ export class PointCloudViewer {
     this._updateSelectionBox();
   }
 
-  _updateSelectionBox() {
-    if (this._boxHelper) {
-      this.scene.remove(this._boxHelper);
-      this._boxHelper.geometry.dispose();
-      this._boxHelper.material.dispose();
-      this._boxHelper = null;
+  _clearBoxHelpers() {
+    for (const helper of this._boxHelpers) {
+      this.scene.remove(helper);
+      helper.geometry.dispose();
+      helper.material.dispose();
     }
+    this._boxHelpers = [];
+  }
+
+  _updateSelectionBox() {
+    this._clearBoxHelpers();
     const cloud = this.cloud;
-    if (!cloud?.instances || this.selectedInstance == null) return;
-    const box = this._box3.makeEmpty();
+    const wanted = new Set(this.selectedInstances || []);
+    if (!cloud?.instances || !wanted.size) return;
+    const boxes = new Map();
     const point = new THREE.Vector3();
-    const id = this.selectedInstance;
     for (let i = 0; i < cloud.count; i += 1) {
-      if (cloud.instances[i] !== id) continue;
+      const inst = cloud.instances[i];
+      if (!wanted.has(inst)) continue;
+      let box = boxes.get(inst);
+      if (!box) {
+        box = new THREE.Box3();
+        boxes.set(inst, box);
+      }
       point.set(cloud.positions[i * 3], cloud.positions[i * 3 + 1], cloud.positions[i * 3 + 2]);
       box.expandByPoint(point);
     }
-    if (box.isEmpty()) return;
-    this._boxHelper = new THREE.Box3Helper(box.clone(), 0x3d9cf0);
-    this.scene.add(this._boxHelper);
+    for (const box of boxes.values()) {
+      if (box.isEmpty()) continue;
+      const helper = new THREE.Box3Helper(box.clone(), 0x3d9cf0);
+      this.scene.add(helper);
+      this._boxHelpers.push(helper);
+    }
   }
 
   _pickIndex(clientX, clientY, unlabeledOnly) {
