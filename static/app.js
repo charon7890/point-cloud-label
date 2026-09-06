@@ -76,6 +76,8 @@ let capturingHotkey = null;
 let mergeLeafId = null;
 const cache = new Map();
 const inflight = new Map();
+// 加载会话：换文件夹时整体作废，正在进行的请求被 abort，迟到的结果不会写进新会话的 cache。
+let loadSession = { id: 0, controller: new AbortController() };
 let clouds = [];
 let activeId = null;
 let loadingId = null;
@@ -838,33 +840,63 @@ function setLoading(visible, text, progress) {
   loadBar.style.width = `${Math.round((progress || 0) * 100)}%`;
 }
 
-function parseInWorker(file, onProgress) {
+function abortError() {
+  return new DOMException("已取消加载", "AbortError");
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+/** 作废当前加载会话：abort 所有进行中的请求，清空 cache / inflight，开启新会话。 */
+function beginLoadSession() {
+  loadSession.controller.abort();
+  loadSession = { id: loadSession.id + 1, controller: new AbortController() };
+  prefetchToken += 1;
+  cache.clear();
+  inflight.clear();
+}
+
+function parseInWorker(file, onProgress, signal) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
     const current = new Worker("/static/parser.worker.js?v=25");
+    const onAbort = () => {
+      current.terminate();
+      reject(abortError());
+    };
+    const done = () => {
+      current.terminate();
+      signal?.removeEventListener("abort", onAbort);
+    };
     const handle = (event) => {
       if (event.data.type === "progress") {
         onProgress?.(event.data.progress);
         return;
       }
-      current.terminate();
+      done();
       if (event.data.type === "done") resolve(event.data.buffer);
       else reject(new Error(event.data.message || "解析失败"));
     };
     current.addEventListener("message", handle);
     current.addEventListener("error", (error) => {
-      current.terminate();
+      done();
       reject(error);
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
     current.postMessage({ file, maxPoints: MAX_POINTS });
   });
 }
 
-async function loadFromServer(item, onProgress) {
+async function loadFromServer(item, onProgress, signal) {
   onProgress?.(0.08);
   const params = new URLSearchParams({
     path: item.id,
   });
-  const response = await fetch(`/api/cloud?${params.toString()}`);
+  const response = await fetch(`/api/cloud?${params.toString()}`, { signal });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
     throw new Error(detail.detail || "服务器加载失败");
@@ -878,14 +910,23 @@ async function loadFromServer(item, onProgress) {
 function ensureCloud(item, onProgress) {
   if (cache.has(item.id)) return Promise.resolve(cache.get(item.id));
   if (inflight.has(item.id)) return inflight.get(item.id);
-  const promise = (item.file ? parseInWorker(item.file, onProgress) : loadFromServer(item, onProgress))
+  const session = loadSession;
+  const signal = session.controller.signal;
+  const promise = (item.file
+    ? parseInWorker(item.file, onProgress, signal)
+    : loadFromServer(item, onProgress, signal)
+  )
     .then((buffer) => {
+      // 会话已切换：结果作废，绝不写进新会话的 cache
+      if (session !== loadSession) throw abortError();
       const cloud = unpackCloud(buffer);
       cache.set(item.id, cloud);
       return cloud;
     })
     .finally(() => {
-      inflight.delete(item.id);
+      if (session !== loadSession) return;
+      // 只清掉自己的 inflight 记录，避免误删同名文件的新请求
+      if (inflight.get(item.id) === promise) inflight.delete(item.id);
       renderList();
     });
   inflight.set(item.id, promise);
@@ -900,6 +941,7 @@ async function prefetchAll() {
     try {
       await ensureCloud(item);
     } catch (error) {
+      if (isAbortError(error)) return;
       console.warn("预加载失败", item.fileName, error);
     }
   }
@@ -928,20 +970,23 @@ async function selectCloud(id) {
   }
 
   loadingId = id;
+  const session = loadSession;
   const already = inflight.has(id);
   setLoading(true, already ? "正在载入点云…" : "正在加载点云…", already ? 0.35 : 0.05);
   try {
     const cloud = await ensureCloud(item, (progress) => {
-      if (activeId !== id) return;
+      if (session !== loadSession || activeId !== id) return;
       setLoading(true, "正在读取点云…", progress);
     });
-    if (activeId !== id) return;
+    if (session !== loadSession || activeId !== id) return;
     viewer.show(cloud, { labeled: book.labeledMap(id) });
     afterCloudShown(item, cloud);
   } catch (error) {
+    if (session !== loadSession || isAbortError(error)) return;
     if (activeId === id) currentMeta.textContent = error.message || String(error);
   } finally {
-    if (loadingId === id) {
+    // 会话已切换时不要动新会话的加载遮罩
+    if (session === loadSession && loadingId === id) {
       loadingId = null;
       setLoading(false, "", 0);
     }
@@ -1017,9 +1062,7 @@ async function importLocalPath(path) {
 }
 
 function resetToImport() {
-  prefetchToken += 1;
-  cache.clear();
-  inflight.clear();
+  beginLoadSession();
   clouds = [];
   activeId = null;
   loadingId = null;
