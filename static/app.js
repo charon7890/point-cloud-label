@@ -81,6 +81,7 @@ let activeId = null;
 let loadingId = null;
 let folderKey = "";
 let folderRoot = "";
+let restoreNote = "";
 let prefetchToken = 0;
 const LAST_FOLDER_KEY = "pc-label:last-folder";
 
@@ -162,10 +163,10 @@ function remapBookToClouds() {
   }
 }
 
-function persist() {
+function persist(updatedAt = Date.now()) {
   if (!folderKey && !folderRoot) return;
   try {
-    const json = JSON.stringify(book.toJSON());
+    const json = JSON.stringify({ updatedAt, book: book.toJSON() });
     for (const key of storageKeysForFolder()) {
       localStorage.setItem(`pc-label:${key}`, json);
     }
@@ -174,19 +175,78 @@ function persist() {
   }
 }
 
-function restoreBook() {
-  try {
-    for (const key of storageKeysForFolder()) {
-      const raw = localStorage.getItem(`pc-label:${key}`);
-      if (!raw) continue;
-      book.fromJSON(JSON.parse(raw));
-      remapBookToClouds();
-      if (book.leaves.length) return;
+/** 浏览器暂存。兼容旧格式（直接存 book，没有时间戳，视为 updatedAt = 0）。 */
+function readStoredBook() {
+  for (const key of storageKeysForFolder()) {
+    let raw = null;
+    try {
+      raw = localStorage.getItem(`pc-label:${key}`);
+    } catch {
+      raw = null;
     }
-    book.reset();
+    if (!raw) continue;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!parsed) continue;
+    const isWrapped = parsed.book && Array.isArray(parsed.book.leaves);
+    const data = isWrapped ? parsed.book : parsed;
+    if (!Array.isArray(data?.leaves) || !data.leaves.length) continue;
+    return { data, updatedAt: isWrapped ? Number(parsed.updatedAt) || 0 : 0 };
+  }
+  return null;
+}
+
+function parseSavedAt(value) {
+  if (!value) return 0;
+  const ts = Date.parse(String(value));
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+/**
+ * 恢复标注：磁盘 leaf_labels.json 与浏览器暂存取较新的一份。
+ * saved = { labels, savedAt, error } 来自 /api/scan 或拖入的 json 文件。
+ */
+function restoreBook(saved) {
+  restoreNote = "";
+  const disk = saved?.labels && Array.isArray(saved.labels.leaves) && saved.labels.leaves.length
+    ? { data: saved.labels, savedAt: parseSavedAt(saved.savedAt) }
+    : null;
+  const local = readStoredBook();
+  let chosen = null;
+  if (disk && local) {
+    if (local.updatedAt > disk.savedAt) {
+      chosen = local.data;
+      restoreNote = "已恢复浏览器暂存（比磁盘 leaf_labels.json 新，保存后会覆盖）";
+    } else {
+      chosen = disk.data;
+      restoreNote = "已从 leaf_labels.json 恢复标注";
+    }
+  } else if (disk) {
+    chosen = disk.data;
+    restoreNote = "已从 leaf_labels.json 恢复标注";
+  } else if (local) {
+    chosen = local.data;
+    restoreNote = "已恢复浏览器暂存的标注";
+  }
+  if (saved?.error) restoreNote = saved.error;
+  try {
+    if (chosen) {
+      book.fromJSON(chosen);
+      book.activeId = null;
+      remapBookToClouds();
+    } else {
+      book.reset();
+    }
   } catch {
     book.reset();
+    restoreNote = "标注数据损坏，已重新开始";
   }
+  // 从磁盘恢复时，把暂存时间对齐到磁盘保存时间，下次导入不会误判为"浏览器暂存更新"。
+  if (chosen && disk && chosen === disk.data) persist(disk.savedAt);
 }
 
 function inferFolderFromClouds() {
@@ -640,7 +700,8 @@ function renderLeaves() {
 
 function updateFolderMeta() {
   const ready = clouds.filter((item) => cache.has(item.id)).length;
-  folderMeta.textContent = `共 ${clouds.length} 个点云，已按时间排序 · 已载入 ${ready}/${clouds.length}`;
+  const note = restoreNote ? ` · ${restoreNote}` : "";
+  folderMeta.textContent = `共 ${clouds.length} 个点云，已按时间排序 · 已载入 ${ready}/${clouds.length}${note}`;
 }
 
 function renderList() {
@@ -746,12 +807,12 @@ function stepLeaf(delta) {
 
 viewer.onInstanceClick = handleInstanceClick;
 
-function showApp(title, items, rootPath = "") {
+function showApp(title, items, rootPath = "", saved = null) {
   clouds = items;
   folderKey = rootPath || title || "session";
   folderRoot = rootPath || inferFolderFromClouds() || "";
   if (folderRoot) writeLastFolder(folderRoot);
-  restoreBook();
+  restoreBook(saved);
   history.reset(book);
   updateUndoButtons();
   document.body.classList.add("app-open");
@@ -887,6 +948,33 @@ async function selectCloud(id) {
   }
 }
 
+/** 把 /api/scan 返回里的已保存标注整理成 restoreBook 需要的结构。 */
+function savedLabelsFromScan(data) {
+  if (!data) return null;
+  if (data.labelsError) return { error: data.labelsError };
+  if (!data.labels) return null;
+  return { labels: data.labels, savedAt: data.labelsSavedAt || null, path: data.labelsPath || "" };
+}
+
+/** 拖入的文件里若带有 leaf_labels.json（取层级最浅的那个），直接读出来。 */
+async function savedLabelsFromEntries(entries) {
+  const candidates = entries
+    .filter((entry) => {
+      const rel = String(entry.relPath || entry.file?.name || "").replace(/\\/g, "/");
+      const name = rel.split("/").pop();
+      return name === "leaf_labels.json" && !rel.split("/").some((part) => part.startsWith("backup_"));
+    })
+    .sort((a, b) => a.relPath.split(/[/\\]/).length - b.relPath.split(/[/\\]/).length);
+  if (!candidates.length) return null;
+  try {
+    const payload = JSON.parse(await candidates[0].file.text());
+    if (!Array.isArray(payload?.labels?.leaves)) return { error: "leaf_labels.json 格式不正确" };
+    return { labels: payload.labels, savedAt: payload.savedAt || null, path: candidates[0].relPath };
+  } catch (error) {
+    return { error: `无法读取 leaf_labels.json: ${error.message || error}` };
+  }
+}
+
 async function importBrowserFiles(entries) {
   const items = toCloudItems(entries);
   if (!items.length) {
@@ -896,21 +984,22 @@ async function importBrowserFiles(entries) {
   setStatus("正在确认文件夹位置…");
   const located = await locateFolderOnDisk(items);
   if (located) {
-    await importLocalPath(located);
+    const scan = await importLocalPath(located);
     if (clouds.length > items.length) {
       const opened = new Set(items.map((item) => item.fileName));
       const keep = clouds.filter((item) => opened.has(item.fileName));
       if (keep.length) {
         const root = commonDir(keep.map((item) => item.id)) || located;
         const title = String(root).split(/[/\\]/).filter(Boolean).pop() || "点云列表";
-        showApp(title, keep, root);
+        showApp(title, keep, root, savedLabelsFromScan(scan));
       }
     }
     return;
   }
   setStatus("");
+  const saved = await savedLabelsFromEntries(entries);
   const rootName = (items[0].relativePath.split(/[/\\]/)[0] || "点云列表").trim();
-  showApp(rootName, items, "");
+  showApp(rootName, items, "", saved);
 }
 
 async function importLocalPath(path) {
@@ -923,7 +1012,8 @@ async function importLocalPath(path) {
   const items = data.clouds.map((item) => ({ ...item, source: "server" }));
   const title = data.root.split(/[/\\]/).filter(Boolean).pop() || "点云列表";
   writeLastFolder(data.root);
-  showApp(title, items, data.root);
+  showApp(title, items, data.root, savedLabelsFromScan(data));
+  return data;
 }
 
 function resetToImport() {
@@ -935,6 +1025,7 @@ function resetToImport() {
   loadingId = null;
   folderKey = "";
   folderRoot = "";
+  restoreNote = "";
   book.reset();
   history.reset(book);
   updateUndoButtons();

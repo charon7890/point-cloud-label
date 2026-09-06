@@ -240,6 +240,29 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+LABELS_FILENAME = "leaf_labels.json"
+
+
+def load_saved_labels(root: Path) -> dict:
+    """读取文件夹下已保存的 leaf_labels.json；不存在返回空 dict，损坏时带 error。"""
+    json_path = root / LABELS_FILENAME
+    if not json_path.is_file():
+        return {}
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"labelsPath": str(json_path), "labelsError": f"无法读取 {LABELS_FILENAME}: {exc}"}
+    labels = payload.get("labels") if isinstance(payload, dict) else None
+    if not isinstance(labels, dict) or not isinstance(labels.get("leaves"), list):
+        return {"labelsPath": str(json_path), "labelsError": f"{LABELS_FILENAME} 格式不正确"}
+    return {
+        "labelsPath": str(json_path),
+        "labels": labels,
+        "labelsSavedAt": payload.get("savedAt"),
+        "labelsClouds": payload.get("clouds") or [],
+    }
+
+
 @app.get("/api/scan")
 def scan_folder(path: str = Query(..., min_length=1)) -> dict:
     root = Path(path).expanduser()
@@ -250,7 +273,9 @@ def scan_folder(path: str = Query(..., min_length=1)) -> dict:
     clouds = collect_clouds(root)
     if not clouds:
         raise HTTPException(status_code=404, detail="未找到点云文件（.txt / .xyz / .ply / .pcd）")
-    return {"root": str(root.resolve()), "count": len(clouds), "clouds": clouds}
+    result = {"root": str(root.resolve()), "count": len(clouds), "clouds": clouds}
+    result.update(load_saved_labels(root))
+    return result
 
 
 @app.get("/api/cloud")
@@ -723,6 +748,7 @@ async def save_labels(request: Request) -> dict:
         )
         if inferred is not None:
             original = inferred
+    payload["savedAt"] = datetime.now().astimezone().isoformat(timespec="seconds")
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     saved: list[str] = []
     requested = str(payload.get("exportDir") or "").strip()
