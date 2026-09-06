@@ -1050,6 +1050,8 @@ function labelPayload() {
       fileName: item.fileName,
       relativePath: item.relativePath,
       dateLabel: item.dateLabel,
+      // 原始数据列数（不含 leaf_id），保存时用于判断末列是否已是 leaf_id
+      originalColumns: item.originalColumns || null,
     })),
     labels: book.toJSON(),
   };

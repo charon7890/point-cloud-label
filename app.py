@@ -84,6 +84,7 @@ def collect_clouds(root: Path) -> list[dict]:
     items = []
     for path in files:
         time_key = extract_time_key(path)
+        info = inspect_cloud_columns(path)
         items.append(
             {
                 "id": str(path),
@@ -93,6 +94,9 @@ def collect_clouds(root: Path) -> list[dict]:
                 "timeKey": time_key,
                 "dateLabel": format_date_label(time_key),
                 "sizeBytes": path.stat().st_size,
+                "columns": info["columns"],
+                "hasLeafId": info["hasLeafId"],
+                "originalColumns": info["originalColumns"],
             }
         )
     items.sort(key=lambda item: (item["timeKey"], item["relativePath"]))
@@ -589,13 +593,124 @@ def instance_to_leaf_maps(payload: dict) -> dict[str, dict[int, int]]:
     return by_cloud
 
 
-def remap_ascii_file(src: Path, dest: Path, inst_to_leaf: dict[int, int]) -> int:
-    """原样保留各列，在末尾写入 leaf_id；同一叶片跨文件同一号，未对应为 0。可安全覆盖源文件。"""
+LEAF_NOTE_PREFIX = "// leaf_id"
+LEAF_HEADER_NOTE = "// leaf_id 为跨文件统一叶片号，未对应实例为 0"
+_META_PREFIXES = ("ply", "format", "comment", "element", "property", "end_header", "version")
+DEFAULT_INST_COLUMN = 3
+
+
+def _is_meta_line(compact: str) -> bool:
+    return compact[0] in "#/" or compact.lower().startswith(_META_PREFIXES)
+
+
+def _header_column_names(compact: str) -> list[str] | None:
+    """若这是一行列名注释（如 `//x y z inst_class ...` 或 `# x y z ...`），返回列名列表。"""
+    if not compact or compact[0] not in "#/":
+        return None
+    if compact.startswith(LEAF_NOTE_PREFIX):
+        return None
+    body = compact.lstrip("#/").strip()
+    names = body.split()
+    if len(names) < 3:
+        return None
+    lower = [name.lower() for name in names]
+    looks_like_header = lower[:3] == ["x", "y", "z"] or "inst_class" in lower
+    if not looks_like_header:
+        return None
+    # 列名不应是数字
+    if any(re.fullmatch(r"[-+]?\d+(\.\d+)?([eE][-+]?\d+)?", name) for name in names):
+        return None
+    return names
+
+
+def inspect_cloud_columns(path: Path) -> dict:
+    """读表头与首行数据，判断列数、inst_class 列号，以及末列是否已是 leaf_id。
+
+    返回 columns（当前数据列数，含 leaf_id）、hasLeafId、originalColumns（去掉 leaf_id 后的列数）、
+    instColumn、headerNames、leafSource（判断依据：header / note / none）。
+    """
+    names: list[str] | None = None
+    has_note = False
+    columns = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                compact = line.strip()
+                if not compact:
+                    continue
+                if _is_meta_line(compact):
+                    if compact.startswith(LEAF_NOTE_PREFIX):
+                        has_note = True
+                    elif names is None:
+                        names = _header_column_names(compact)
+                    continue
+                columns = len(compact.split())
+                break
+    except OSError:
+        return {
+            "columns": 0,
+            "hasLeafId": False,
+            "originalColumns": 0,
+            "instColumn": DEFAULT_INST_COLUMN,
+            "headerNames": None,
+            "leafSource": "none",
+        }
+
+    inst_column = DEFAULT_INST_COLUMN
+    if names:
+        lower = [name.lower() for name in names]
+        if "inst_class" in lower:
+            inst_column = lower.index("inst_class")
+
+    if names and len(names) == columns:
+        has_leaf = names[-1].lower() == "leaf_id"
+        source = "header"
+    elif has_note:
+        has_leaf = True
+        source = "note"
+    else:
+        has_leaf = False
+        source = "none"
+    return {
+        "columns": columns,
+        "hasLeafId": has_leaf,
+        "originalColumns": columns - 1 if has_leaf else columns,
+        "instColumn": inst_column,
+        "headerNames": names,
+        "leafSource": source,
+    }
+
+
+def _decide_leaf_column(info: dict, original_columns: int | None) -> bool:
+    """综合表头 / 标记 / json 记录的原始列数，决定是否把末列当作已有的 leaf_id 覆盖。"""
+    if info["leafSource"] in ("header", "note"):
+        return bool(info["hasLeafId"])
+    if original_columns and info["columns"]:
+        if info["columns"] == original_columns + 1:
+            return True
+        if info["columns"] == original_columns:
+            return False
+    return False
+
+
+def remap_ascii_file(
+    src: Path,
+    dest: Path,
+    inst_to_leaf: dict[int, int],
+    original_columns: int | None = None,
+) -> int:
+    """原样保留各列，在末尾写入 leaf_id；同一叶片跨文件同一号，未对应为 0。可安全覆盖源文件。
+
+    是否已有 leaf_id 列按文件判断一次：表头末列名 > 程序写的标记行 > json 记录的原始列数。
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".leaf_tmp")
+    info = inspect_cloud_columns(src)
+    replace_last = _decide_leaf_column(info, original_columns)
+    inst_column = info["instColumn"]
     labeled_points = 0
-    header_note = "// leaf_id 为跨文件统一叶片号，未对应实例为 0"
     wrote_note = False
+    wrote_header = False
     try:
         with src.open("r", encoding="utf-8", errors="ignore") as fin, tmp.open(
             "w", encoding="utf-8", newline="\n"
@@ -606,39 +721,33 @@ def remap_ascii_file(src: Path, dest: Path, inst_to_leaf: dict[int, int]) -> int
                 if not compact:
                     fout.write("\n" if line.endswith("\n") else line)
                     continue
-                lower = compact.lower()
-                is_meta = compact[0] in "#/" or lower.startswith(
-                    ("ply", "format", "comment", "element", "property", "end_header", "version")
-                )
-                if is_meta:
-                    if compact.startswith("// leaf_id"):
-                        if not wrote_note:
-                            fout.write(header_note + "\n")
-                            wrote_note = True
-                        continue
+                if _is_meta_line(compact):
                     if not wrote_note:
-                        fout.write(header_note + "\n")
+                        fout.write(LEAF_HEADER_NOTE + "\n")
                         wrote_note = True
-                    if "leaf_id" not in lower and (
-                        "inst_class" in lower or compact.startswith("//x") or compact.startswith("#x")
-                    ):
-                        stripped = f"{stripped} leaf_id"
+                    if compact.startswith(LEAF_NOTE_PREFIX):
+                        continue
+                    if not wrote_header and _header_column_names(compact) is not None:
+                        wrote_header = True
+                        names = _header_column_names(compact) or []
+                        if names and names[-1].lower() != "leaf_id":
+                            stripped = f"{stripped} leaf_id"
                     fout.write(stripped + "\n")
                     continue
                 if not wrote_note:
-                    fout.write(header_note + "\n")
+                    fout.write(LEAF_HEADER_NOTE + "\n")
                     wrote_note = True
                 parts = compact.split()
                 leaf_id = 0
-                if len(parts) >= 4:
+                if len(parts) > inst_column:
                     try:
-                        old = int(float(parts[3]))
+                        old = int(float(parts[inst_column]))
                         leaf_id = int(inst_to_leaf.get(old, 0))
                     except ValueError:
                         leaf_id = 0
                 if leaf_id:
                     labeled_points += 1
-                if len(parts) >= 14:
+                if replace_last and len(parts) == info["columns"]:
                     parts[-1] = str(leaf_id)
                     fout.write(" ".join(parts) + "\n")
                 else:
@@ -724,7 +833,11 @@ def export_remapped_clouds(payload: dict, out_root: Path) -> tuple[list[str], li
             dest = out_root / Path(relative).name
         mapping = maps.get(cloud_id) or maps.get(_norm_path_key(cloud_id)) or maps.get(_norm_path_key(str(src))) or {}
         try:
-            remap_ascii_file(src, dest, mapping)
+            original_columns = int(item.get("originalColumns") or 0) or None
+        except (TypeError, ValueError):
+            original_columns = None
+        try:
+            remap_ascii_file(src, dest, mapping, original_columns)
             exported.append(str(dest))
         except OSError as exc:
             errors.append(f"{src.name}: {exc}")
