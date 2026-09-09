@@ -38,16 +38,63 @@ SPLIT_FRAC = 0.10
 # ---------------------------------------------------------------------------
 
 
-def load_leaf_ids(path: Path) -> np.ndarray:
+ID_COLUMN_PREFERENCE = ("leaf_id", "inst_class")
+
+
+def read_header_columns(path: Path) -> list[str] | None:
+    """返回以 `//` 或 `#` 开头的列名表头（小写），没有则 None。
+
+    只看数据行之前的注释行；类似 `// leaf_id 为…` 的说明行不算表头。
+    """
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            if text[0] not in "#/":
+                return None
+            names = text.lstrip("#/").strip().split()
+            lower = [n.lower() for n in names]
+            if len(lower) >= 3 and lower[:3] == ["x", "y", "z"]:
+                return lower
+    return None
+
+
+def resolve_id_column(path: Path, column: str | None) -> tuple[int, str]:
+    """决定读哪一列作身份。返回 (列索引, 说明)。
+
+    column 可以是列名（按表头找）、整数下标（支持负数）或 None（自动：
+    leaf_id > inst_class > 末列）。
+    """
+    header = read_header_columns(path)
+    if column:
+        text = column.strip()
+        if re.fullmatch(r"-?\d+", text):
+            idx = int(text)
+            return idx, f"col[{idx}]"
+        if header is None:
+            raise ValueError(f"{path.name} 没有列名表头，无法按名字 '{column}' 取列，请用列下标")
+        if text.lower() not in header:
+            raise ValueError(f"{path.name} 表头里没有列 '{column}'，可用：{' '.join(header)}")
+        return header.index(text.lower()), text
+    if header:
+        for name in ID_COLUMN_PREFERENCE:
+            if name in header:
+                return header.index(name), name
+    return -1, "last column"
+
+
+def load_leaf_ids(path: Path, column: str | None = None) -> np.ndarray:
+    idx, _ = resolve_id_column(path, column)
     values = np.loadtxt(
         path,
-        comments="/",
-        usecols=(-1,),
+        comments=("#", "/"),
+        usecols=(idx,),
         dtype=np.float64,
         ndmin=1,
         encoding="utf-8",
     )
-    return values.astype(np.int32, copy=False)
+    return np.rint(values).astype(np.int32, copy=False)
 
 
 def _date_key(text: str) -> str:
@@ -101,7 +148,8 @@ def list_clouds(root: Path) -> list[dict]:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix.lower() not in POINT_EXTS:
                 continue
-            if "backup_" in path.parts:
+            rel_parts = path.relative_to(root).parts
+            if any(p.startswith("backup_") or p.startswith(".") for p in rel_parts):
                 continue
             date_key = _date_key(str(path.relative_to(root))) or _date_key(path.name)
             if not date_key:
@@ -294,11 +342,20 @@ def match_frame(frame: Frame, alpha: float) -> list[tuple[int, int, float]]:
     return out
 
 
-def load_frames(pairs: list[dict]) -> list[Frame]:
+def load_frames(
+    pairs: list[dict],
+    gt_col: str | None = None,
+    pred_col: str | None = None,
+    verbose: bool = False,
+) -> list[Frame]:
     frames: list[Frame] = []
     for item in pairs:
-        gt = load_leaf_ids(item["gt"])
-        pred = load_leaf_ids(item["pred"])
+        if verbose:
+            _, gt_desc = resolve_id_column(item["gt"], gt_col)
+            _, pr_desc = resolve_id_column(item["pred"], pred_col)
+            print(f"  {item['date']}  gt<-{gt_desc:<12} pred<-{pr_desc:<12} {item['gt'].name} | {item['pred'].name}", flush=True)
+        gt = load_leaf_ids(item["gt"], gt_col)
+        pred = load_leaf_ids(item["pred"], pred_col)
         if gt.shape != pred.shape:
             raise ValueError(
                 f"{item['rel']} 点数不一致：真值 {gt.size}，预测 {pred.size}。"
@@ -805,6 +862,74 @@ def compute_gap_assoc(frames: list[Frame], alpha: float = MATCH_ALPHA) -> list[d
 
 
 # ---------------------------------------------------------------------------
+# TrackAcc (3D-OGT protocol, Li et al. 2026) for comparison with prior work
+# ---------------------------------------------------------------------------
+
+
+def compute_trackacc(frames: list[Frame], pred_to_gt: dict[str, int] | None = None) -> dict:
+    """TrackAcc as defined in 3D-OGT (eq. 3–6).
+
+    For every GT organ in every scan except the first (the first scan is the
+    tracking seed in 3D-OGT), pick the predicted ID with the highest point-set
+    IoU (argmax, no threshold, not one-to-one).  A True Tracking (TT) is counted
+    when that predicted ID equals the GT ID.  TrackAcc = TT / TI.
+
+    Two variants are reported:
+      * TrackAcc        — strict, predicted IDs must live in the GT namespace
+                          (3D-OGT propagates the GT labels of scan 0, so this
+                          holds for them; for an independent tracker it may not).
+      * TrackAcc_perm   — permutation-invariant: predicted IDs are first mapped
+                          to GT IDs with the global Hungarian mapping from
+                          compute_miou (pred_to_gt), then compared.
+    Both are also given with the first scan included (_incl_first), which is the
+    fair setting when the tracker does not receive scan 0 for free.
+    """
+    mapping = {int(k): int(v) for k, v in (pred_to_gt or {}).items()}
+    tt = tt_perm = ti = 0
+    tt_f = tt_perm_f = ti_f = 0
+    rows = []
+    for idx, fr in enumerate(frames):
+        gts, prs, mat = fr.iou_matrix()
+        n_tt = n_tt_perm = 0
+        for i, g in enumerate(gts):
+            best = None
+            if prs:
+                j = int(np.argmax(mat[i]))
+                if mat[i, j] > 0:
+                    best = prs[j]
+            strict_ok = best is not None and best == g
+            perm_ok = best is not None and mapping.get(best) == g
+            n_tt += int(strict_ok)
+            n_tt_perm += int(perm_ok)
+        rows.append(
+            {
+                "date": fr.date,
+                "n_gt": len(gts),
+                "TT": n_tt,
+                "TT_perm": n_tt_perm,
+                "TrackAcc": n_tt / len(gts) if gts else 1.0,
+                "TrackAcc_perm": n_tt_perm / len(gts) if gts else 1.0,
+            }
+        )
+        ti_f += len(gts)
+        tt_f += n_tt
+        tt_perm_f += n_tt_perm
+        if idx > 0:
+            ti += len(gts)
+            tt += n_tt
+            tt_perm += n_tt_perm
+    return {
+        "TrackAcc": tt / ti if ti else 1.0,
+        "TrackAcc_perm": tt_perm / ti if ti else 1.0,
+        "TrackAcc_TT": tt,
+        "TrackAcc_TI": ti,
+        "TrackAcc_incl_first": tt_f / ti_f if ti_f else 1.0,
+        "TrackAcc_perm_incl_first": tt_perm_f / ti_f if ti_f else 1.0,
+        "trackacc_rows": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Majority-vote diagnostic (previous definition; not the paper primary)
 # ---------------------------------------------------------------------------
 
@@ -854,6 +979,7 @@ def evaluate(frames: list[Frame]) -> dict:
     assoc = compute_assoc(frames)
     gap = compute_gap_assoc(frames)
     maj = compute_majority_assoc(frames)
+    trackacc = compute_trackacc(frames, miou["pred_to_gt"])
     summary = {
         "n_scans": len(frames),
         "dates": [fr.date for fr in frames],
@@ -866,12 +992,14 @@ def evaluate(frames: list[Frame]) -> dict:
         **{k: v for k, v in miou.items() if k != "pred_to_gt"},
         **{k: v for k, v in assoc.items() if k not in {"pair_rows", "leaf_rows"}},
         **maj,
+        **{k: v for k, v in trackacc.items() if k != "trackacc_rows"},
         "hota_by_alpha": hota["by_alpha"],
         "pred_to_gt": miou["pred_to_gt"],
         "idf1_track_map": idf1.get("track_map", {}),
         "pair_rows": assoc["pair_rows"],
         "leaf_rows": assoc["leaf_rows"],
         "gap_rows": gap,
+        "trackacc_rows": trackacc["trackacc_rows"],
     }
     return summary
 
@@ -914,6 +1042,12 @@ def print_report(gt: Path, pred: Path, s: dict) -> None:
     print("Majority-vote AssocAcc (diagnostic, not used as primary): "
           f"{_pct(s['AssocAcc_majority'])}")
     print()
+    print("========== TrackAcc (3D-OGT protocol, for comparison with prior work) ==========")
+    print(f"TrackAcc (strict, GT-ID namespace)   {_pct(s['TrackAcc'])}    "
+          f"{s['TrackAcc_TT']}/{s['TrackAcc_TI']}  (argmax IoU, ID must equal GT, first scan excluded)")
+    print(f"TrackAcc (permutation-invariant)     {_pct(s['TrackAcc_perm'])}    pred IDs mapped via global Hungarian")
+    print(f"  incl. first scan: strict {_pct(s['TrackAcc_incl_first'])} / perm {_pct(s['TrackAcc_perm_incl_first'])}")
+    print()
     print("Association vs interval (frame step):")
     for row in s["gap_rows"]:
         if row["kind"] == "frame_step":
@@ -943,7 +1077,7 @@ def print_report(gt: Path, pred: Path, s: dict) -> None:
 
 def write_outputs(out_dir: Path, s: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    skip = {"pair_rows", "leaf_rows", "gap_rows", "hota_by_alpha", "pred_to_gt", "idf1_track_map"}
+    skip = {"pair_rows", "leaf_rows", "gap_rows", "hota_by_alpha", "pred_to_gt", "idf1_track_map", "trackacc_rows"}
     summary = {k: v for k, v in s.items() if k not in skip}
     summary["pred_to_gt"] = s.get("pred_to_gt", {})
     (out_dir / "summary.json").write_text(
@@ -953,6 +1087,7 @@ def write_outputs(out_dir: Path, s: dict) -> None:
     _csv(out_dir / "per_leaf.csv", s["leaf_rows"])
     _csv(out_dir / "assoc_by_gap.csv", s["gap_rows"])
     _csv(out_dir / "hota_by_alpha.csv", s["hota_by_alpha"])
+    _csv(out_dir / "trackacc_by_scan.csv", s["trackacc_rows"])
     paper = {
         "HOTA": s["HOTA"],
         "DetA": s["DetA"],
@@ -974,6 +1109,8 @@ def write_outputs(out_dir: Path, s: dict) -> None:
         "temporal_cost": s["temporal_cost"],
         "ARI_points": s["ARI_points"],
         "MOTA": s["MOTA"],
+        "TrackAcc_OGT": s["TrackAcc"],
+        "TrackAcc_OGT_perm": s["TrackAcc_perm"],
     }
     _csv(out_dir / "paper_table.csv", [paper])
 
@@ -1052,6 +1189,26 @@ def self_test() -> None:
     s = evaluate(miss)
     assert s["n_adjacent_miss"] == 1
     assert s["AssocAcc"] == 0.0
+
+    # TrackAcc (3D-OGT protocol)
+    s = evaluate(perfect)
+    assert s["TrackAcc"] == 1.0 and s["TrackAcc_perm"] == 1.0
+    assert s["TrackAcc_TI"] == 2  # first scan excluded: 2 GT leaves in scan 2 only
+    # global relabelling: strict fails, permutation-invariant is perfect
+    s = evaluate(perm)
+    assert s["TrackAcc"] == 0.0, s["TrackAcc"]
+    assert s["TrackAcc_perm"] == 1.0
+    # merge: 3D-OGT counts the dominant leaf as tracked (argmax, not one-to-one)
+    merged_uneven = [
+        _toy("20250101", [(1, 1, 100), (2, 1, 40)]),
+        _toy("20250103", [(1, 1, 100), (2, 1, 40)]),
+    ]
+    s = evaluate(merged_uneven)
+    assert abs(s["TrackAcc"] - 0.5) < 1e-9, s["TrackAcc"]      # leaf 1 TT, leaf 2 not (pred 1 != 2)
+    assert s["AssocAcc"] < 1.0                                  # stricter metric also penalises
+    # unmatched GT (pred 0 = background) is never TT
+    s = evaluate(miss)
+    assert s["TrackAcc"] == 0.0 and s["TrackAcc_TI"] == 1
     print("self-test ok")
 
 
@@ -1065,6 +1222,16 @@ def main() -> None:
     parser.add_argument("--gt", type=Path, help="Ground-truth folder")
     parser.add_argument("--pred", type=Path, help="Prediction folder")
     parser.add_argument("--out", type=Path, default=None, help="Output directory")
+    parser.add_argument(
+        "--gt-col",
+        default=None,
+        help="真值身份列：列名（按表头）或下标（可负）。默认自动：leaf_id > inst_class > 末列",
+    )
+    parser.add_argument(
+        "--pred-col",
+        default=None,
+        help="预测身份列：列名或下标。默认自动：leaf_id > inst_class > 末列",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -1075,7 +1242,9 @@ def main() -> None:
         parser.error("请提供 --gt 和 --pred")
     gt_root = args.gt.expanduser().resolve()
     pred_root = args.pred.expanduser().resolve()
-    frames = load_frames(pair_clouds(gt_root, pred_root))
+    pairs = pair_clouds(gt_root, pred_root)
+    print(f"Loading {len(pairs)} scan pairs …")
+    frames = load_frames(pairs, args.gt_col, args.pred_col, verbose=True)
     summary = evaluate(frames)
     print_report(gt_root, pred_root, summary)
     out_dir = args.out.expanduser().resolve() if args.out else pred_root / "temporal_eval"

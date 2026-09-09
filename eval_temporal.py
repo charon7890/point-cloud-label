@@ -2,6 +2,8 @@
 
 用法：
   python eval_temporal.py --gt E:\\pepper_results\\K10 --pred E:\\pepper_results\\K10-WR
+
+身份列默认按表头自动选择（leaf_id > inst_class > 末列）；需要时用 --gt-col / --pred-col 指定列名或下标。
 """
 
 from eval_leaf_tracks import main
