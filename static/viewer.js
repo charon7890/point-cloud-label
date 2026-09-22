@@ -162,6 +162,7 @@ export class PointCloudViewer {
     this.colorMode = "instance";
     this.pointSize = 1.8;
     this.labeled = new Map();
+    this.hideLabeled = false;
     this.selectedInstances = [];
     this.onInstanceClick = null;
     this._fitted = null;
@@ -335,6 +336,33 @@ export class PointCloudViewer {
     if (this.cloud) this._rebuildLayers();
   }
 
+  setHideLabeled(on) {
+    this.hideLabeled = Boolean(on);
+    for (const points of this.ghostChunks) points.visible = !this.hideLabeled;
+    this._updateSelectionBox();
+  }
+
+  captureView() {
+    return {
+      position: this.camera.position.clone(),
+      target: this.controls.target.clone(),
+      zoom: this.camera.zoom,
+    };
+  }
+
+  restoreView(view) {
+    // 清除 OrbitControls 尚未结束的惯性，避免旧点云的拖动影响恢复结果。
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update();
+    this.camera.position.copy(view.position);
+    this.controls.target.copy(view.target);
+    this.camera.zoom = view.zoom;
+    this.controls.update();
+    this.controls.enableDamping = damping;
+    this._syncClipPlanes();
+  }
+
   highlightInstance(idOrIds) {
     if (idOrIds == null) this.selectedInstances = [];
     else if (Array.isArray(idOrIds)) this.selectedInstances = idOrIds.filter((id) => id != null);
@@ -472,6 +500,7 @@ export class PointCloudViewer {
         depthWrite: false,
       });
       this.ghostChunks = addPointChunks(this.scene, ghostPos, ghostCol, this._ghostMaterial);
+      for (const points of this.ghostChunks) points.visible = !this.hideLabeled;
       this.ghostPoints = this.ghostChunks[0] || null;
     }
     this._updateSelectionBox();
@@ -496,6 +525,7 @@ export class PointCloudViewer {
     for (let i = 0; i < cloud.count; i += 1) {
       const inst = cloud.instances[i];
       if (!wanted.has(inst)) continue;
+      if (this.hideLabeled && this.labeled.has(inst)) continue;
       let box = boxes.get(inst);
       if (!box) {
         box = new THREE.Box3();
@@ -531,7 +561,7 @@ export class PointCloudViewer {
 
     for (let i = 0; i < cloud.count; i += 1) {
       const inst = cloud.instances[i];
-      if (unlabeledOnly && this.labeled.has(inst)) continue;
+      if ((unlabeledOnly || this.hideLabeled) && this.labeled.has(inst)) continue;
       const x = pos[i * 3];
       const y = pos[i * 3 + 1];
       const z = pos[i * 3 + 2];

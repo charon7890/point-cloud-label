@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>点云浏览器</title>
-  <link rel="stylesheet" href="/static/styles.css?v=16" />
+  <link rel="stylesheet" href="/static/styles.css?v=17" />
 </head>
 <body>
   <button type="button" id="btn-hotkeys" class="btn hotkey-fab">设置</button>
@@ -17,6 +17,7 @@
     <ul id="hotkey-list" class="hotkey-list"></ul>
     <div class="hotkey-panel-foot">
       <button type="button" id="btn-hotkeys-reset" class="btn">恢复默认</button>
+      <button type="button" id="btn-shortcut-guide" class="btn">快捷键示例图</button>
     </div>
   </div>
   <div id="drop-screen" class="drop-screen">
@@ -75,6 +76,8 @@
             </select>
           </label>
           <button type="button" id="btn-reset" class="btn">复位视角</button>
+          <button type="button" id="btn-hide-labeled" class="btn" aria-pressed="false">隐藏已标：关 (Z)</button>
+          <button type="button" id="btn-remember-view" class="btn" aria-pressed="false">视角保留：关 (X)</button>
         </div>
       </header>
       <div id="viewport" class="viewport" tabindex="-1">
@@ -131,6 +134,14 @@
     </div>
   </div>
 
+  <dialog id="shortcut-guide" aria-label="快捷键示例图">
+    <img id="shortcut-guide-image" alt="全部快捷键与鼠标操作" />
+    <div class="guide-actions">
+      <span class="muted">每次打开页面自动显示；可在「设置」中再次查看。</span>
+      <button type="button" id="btn-guide-close" class="btn primary">开始使用</button>
+    </div>
+  </dialog>
+
   <script type="importmap">
     {
       "imports": {
@@ -139,6 +150,6 @@
       }
     }
   </script>
-  <script type="module" src="/static/app.js?v=33"></script>
+  <script type="module" src="/static/app.js?v=34"></script>
 </body>
 </html>

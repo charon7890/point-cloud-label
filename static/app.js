@@ -7,7 +7,9 @@ import {
   walkEntry,
 } from "./format.js?v=25";
 import { asInstanceList, leafCss, LeafBook, LabelHistory } from "./labels.js?v=28";
-import { PointCloudViewer } from "./viewer.js?v=27";
+import { PointCloudViewer } from "./viewer.js?v=28";
+import { ViewOptions } from "./view-options.js?v=1";
+import { setupShortcutGuide } from "./shortcut-guide.js?v=1";
 import {
   HOTKEY_DEFS,
   PAN_INTERNAL,
@@ -18,7 +20,7 @@ import {
   loadHotkeys,
   matchHotkeyAction,
   saveHotkeys,
-} from "./hotkeys.js?v=26";
+} from "./hotkeys.js?v=27";
 
 const dropScreen = document.getElementById("drop-screen");
 const dropZone = document.getElementById("drop-zone");
@@ -69,6 +71,7 @@ const btnHotkeysClose = document.getElementById("btn-hotkeys-close");
 const btnHotkeysReset = document.getElementById("btn-hotkeys-reset");
 
 const viewer = new PointCloudViewer(viewport);
+const viewOptions = new ViewOptions(viewer, document.getElementById("btn-hide-labeled"), document.getElementById("btn-remember-view"));
 const book = new LeafBook();
 const history = new LabelHistory();
 let hotkeys = loadHotkeys();
@@ -473,6 +476,7 @@ function shortcutText(id) {
 }
 
 function updateShortcutLabels() {
+  viewOptions.updateLabels(shortcutText);
   if (btnAddLeaf) btnAddLeaf.textContent = `新增叶片 (${shortcutText("addLeaf")})`;
   if (btnUndo) btnUndo.title = shortcutText("undo");
   if (btnRedo) btnRedo.title = shortcutText("redo");
@@ -534,6 +538,12 @@ function applyCapturedHotkey(event) {
 
 function runHotkey(action, event) {
   switch (action) {
+    case "hideLabeled":
+      if (!event.repeat) viewOptions.toggleHidden();
+      return;
+    case "rememberView":
+      if (!event.repeat) viewOptions.toggleRemember();
+      return;
     case "undo":
       undoLabels();
       return;
@@ -964,7 +974,9 @@ async function selectCloud(id) {
   currentMeta.textContent = item.relativePath;
   if (cache.has(id)) {
     const cached = cache.get(id);
-    viewer.show(cached, { labeled: book.labeledMap(id) });
+    viewOptions.show(cached, { labeled: book.labeledMap(id) });
+    loadingId = null;
+    setLoading(false, "", 0);
     afterCloudShown(item, cached);
     return;
   }
@@ -979,7 +991,7 @@ async function selectCloud(id) {
       setLoading(true, "正在读取点云…", progress);
     });
     if (session !== loadSession || activeId !== id) return;
-    viewer.show(cloud, { labeled: book.labeledMap(id) });
+    viewOptions.show(cloud, { labeled: book.labeledMap(id) });
     afterCloudShown(item, cloud);
   } catch (error) {
     if (session !== loadSession || isAbortError(error)) return;
@@ -1376,3 +1388,4 @@ colorModeSelect.addEventListener("change", () => {
 btnReset.addEventListener("click", () => viewer.resetView());
 
 updateShortcutLabels();
+setupShortcutGuide(() => hotkeys, () => viewer.clearPanKeys());

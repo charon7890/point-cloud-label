@@ -11,6 +11,38 @@
   --ok: #3fb950;
 }
 
+#shortcut-guide {
+  width: min(1120px, 96vw);
+  max-height: 94vh;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  overflow: auto;
+}
+
+#shortcut-guide::backdrop {
+  background: rgb(0 0 0 / 75%);
+}
+
+#shortcut-guide-image {
+  display: block;
+  width: 100%;
+}
+
+.guide-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #163854;
+}
+
 * {
   box-sizing: border-box;
 }
