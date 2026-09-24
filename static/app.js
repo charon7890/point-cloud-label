@@ -7,8 +7,8 @@ import {
   walkEntry,
 } from "./format.js?v=25";
 import { asInstanceList, leafCss, LeafBook, LabelHistory } from "./labels.js?v=28";
-import { PointCloudViewer } from "./viewer.js?v=28";
-import { ViewOptions } from "./view-options.js?v=1";
+import { PointCloudViewer } from "./viewer.js?v=29";
+import { ViewOptions } from "./view-options.js?v=2";
 import { setupShortcutGuide } from "./shortcut-guide.js?v=1";
 import {
   HOTKEY_DEFS,
@@ -273,6 +273,7 @@ function applyLocatedFolder(data) {
     files.map((item) => [String(item.id || "").split(/[/\\]/).pop(), item])
   );
   const nextCache = new Map();
+  const idRemap = new Map();
   let nextActive = activeId;
   clouds = clouds.map((item) => {
     const rel = String(item.relativePath || item.id || "").replace(/\\/g, "/");
@@ -285,12 +286,16 @@ function applyLocatedFolder(data) {
       : item;
     delete next.file;
     if (cache.has(item.id)) nextCache.set(next.id, cache.get(item.id));
+    if (item.id !== next.id) idRemap.set(String(item.id), String(next.id));
     if (item.id === activeId) nextActive = next.id;
     return next;
   });
   activeId = nextActive;
   cache.clear();
   for (const [key, value] of nextCache) cache.set(key, value);
+  viewOptions.setStorageKeys(storageKeysForFolder());
+  viewOptions.remapIds(idRemap);
+  viewOptions.persist();
   remapBookToClouds();
   persist();
   history.reset(book);
@@ -824,6 +829,8 @@ function showApp(title, items, rootPath = "", saved = null) {
   folderKey = rootPath || title || "session";
   folderRoot = rootPath || inferFolderFromClouds() || "";
   if (folderRoot) writeLastFolder(folderRoot);
+  // 取出该文件夹上次缓存的视角，切换生长时期时按点云分别恢复。
+  viewOptions.useFolder(storageKeysForFolder());
   restoreBook(saved);
   history.reset(book);
   updateUndoButtons();
@@ -974,7 +981,7 @@ async function selectCloud(id) {
   currentMeta.textContent = item.relativePath;
   if (cache.has(id)) {
     const cached = cache.get(id);
-    viewOptions.show(cached, { labeled: book.labeledMap(id) });
+    viewOptions.show(cached, { id, labeled: book.labeledMap(id) });
     loadingId = null;
     setLoading(false, "", 0);
     afterCloudShown(item, cached);
@@ -991,7 +998,7 @@ async function selectCloud(id) {
       setLoading(true, "正在读取点云…", progress);
     });
     if (session !== loadSession || activeId !== id) return;
-    viewOptions.show(cloud, { labeled: book.labeledMap(id) });
+    viewOptions.show(cloud, { id, labeled: book.labeledMap(id) });
     afterCloudShown(item, cloud);
   } catch (error) {
     if (session !== loadSession || isAbortError(error)) return;
@@ -1074,6 +1081,7 @@ async function importLocalPath(path) {
 }
 
 function resetToImport() {
+  viewOptions.leaveFolder();
   beginLoadSession();
   clouds = [];
   activeId = null;
@@ -1385,7 +1393,15 @@ colorModeSelect.addEventListener("change", () => {
   viewer.setColorMode(colorModeSelect.value);
 });
 
-btnReset.addEventListener("click", () => viewer.resetView());
+btnReset.addEventListener("click", () => viewOptions.resetView());
+
+// 关页面或切到后台前，把正在看的这一张的视角存下来。
+window.addEventListener("pagehide", () => {
+  if (viewOptions.saveCurrent()) viewOptions.persist();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && viewOptions.saveCurrent()) viewOptions.persist();
+});
 
 updateShortcutLabels();
 setupShortcutGuide(() => hotkeys, () => viewer.clearPanKeys());
