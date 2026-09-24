@@ -65,6 +65,20 @@ function disposeChunks(chunks) {
   chunks.length = 0;
 }
 
+/** 不同生长时期点云大小不同，换算比例限制在一个不会把相机甩飞的范围内。 */
+function clampViewScale(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(20, Math.max(0.05, value));
+}
+
+function toVector3(value, fallback = null) {
+  if (Array.isArray(value) && value.length >= 3) {
+    const [x, y, z] = value.map(Number);
+    if ([x, y, z].every(Number.isFinite)) return new THREE.Vector3(x, y, z);
+  }
+  return fallback;
+}
+
 function centerCloud(cloud) {
   if (!cloud || cloud.centered) return;
   const pos = cloud.positions;
@@ -342,22 +356,47 @@ export class PointCloudViewer {
     this._updateSelectionBox();
   }
 
+  /**
+   * 记录当前视角。返回纯数值结构，便于缓存、序列化和跨点云复用。
+   * center / radius 是当前点云的包围球，用于在不同大小的点云之间换算视角。
+   */
   captureView() {
+    const fitted = this._fitted;
     return {
-      position: this.camera.position.clone(),
-      target: this.controls.target.clone(),
-      zoom: this.camera.zoom,
+      position: this.camera.position.toArray(),
+      target: this.controls.target.toArray(),
+      zoom: Number(this.camera.zoom) || 1,
+      center: fitted ? fitted.center.toArray() : null,
+      radius: fitted ? fitted.radius : 0,
     };
   }
 
-  restoreView(view) {
+  /**
+   * 恢复视角。scale 为真时，把记录里的视角按两个点云包围球的比例换算，
+   * 这样切换到长得更大的时期时，画面里植物的取景大小基本不变。
+   */
+  restoreView(view, { scale = false } = {}) {
+    const savedPos = toVector3(view?.position);
+    const savedTarget = toVector3(view?.target);
+    if (!savedPos || !savedTarget) return;
+    let position = savedPos;
+    let target = savedTarget;
+    const fitted = this._fitted;
+    const ratio = scale && fitted && view.radius > 0 && fitted.radius > 0
+      ? clampViewScale(fitted.radius / view.radius)
+      : 1;
+    if (ratio !== 1) {
+      const savedCenter = toVector3(view.center) || fitted.center;
+      target = fitted.center.clone().add(savedTarget.clone().sub(savedCenter).multiplyScalar(ratio));
+      position = target.clone().add(savedPos.clone().sub(savedTarget).multiplyScalar(ratio));
+    }
     // 清除 OrbitControls 尚未结束的惯性，避免旧点云的拖动影响恢复结果。
     const damping = this.controls.enableDamping;
     this.controls.enableDamping = false;
     this.controls.update();
-    this.camera.position.copy(view.position);
-    this.controls.target.copy(view.target);
-    this.camera.zoom = view.zoom;
+    this.camera.position.copy(position);
+    this.controls.target.copy(target);
+    this.camera.zoom = Number(view.zoom) || 1;
     this.controls.update();
     this.controls.enableDamping = damping;
     this._syncClipPlanes();
